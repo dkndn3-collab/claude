@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Apple Motion UI</title>
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+  <div class="app">
+
+    <header class="topbar">
+      <div class="search" id="searchWrap">
+        <svg viewBox="0 0 16 16"><path d="M11.3 10.2a5.5 5.5 0 1 0-1.1 1.1l3.2 3.2a.8.8 0 0 0 1.1-1.1zM7 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+        <input id="search" type="text" placeholder="Search components and motion" autocomplete="off" spellcheck="false">
+        <button class="clear" id="searchClear" title="Clear search" aria-label="Clear search">✕</button>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" data-view="components" aria-selected="true">Components</button>
+        <button class="tab" role="tab" data-view="motion" aria-selected="false">Motion</button>
+        <button class="tab" role="tab" data-view="actions" aria-selected="false">Actions</button>
+      </nav>
+    </header>
+
+    <main class="body" id="body">
+      <section class="view" id="view-components"></section>
+      <section class="view" id="view-motion" hidden></section>
+      <section class="view" id="view-actions" hidden></section>
+    </main>
+
+    <footer class="statusbar" id="status" data-state="idle">
+      <span class="dot"></span>
+      <span class="msg" id="statusMsg">Ready</span>
+    </footer>
+
+    <!-- Parameter sheet, slides up over the browser -->
+    <section class="sheet" id="sheet" aria-hidden="true">
+      <header class="sheet-head">
+        <button class="back" id="sheetBack" title="Back" aria-label="Back">‹</button>
+        <div>
+          <div class="sheet-title" id="sheetTitle">Component</div>
+          <div class="sheet-sub" id="sheetSub"></div>
+        </div>
+      </header>
+      <div class="sheet-body">
+        <div class="hero" id="sheetHero"></div>
+        <p class="hero-note">Preview updates as you change the settings below.</p>
+        <div id="sheetFields"></div>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn" id="sheetReset">Reset</button>
+        <button class="btn primary" id="sheetCreate">Create</button>
+      </footer>
+    </section>
+
+  </div>
+
+  <script src="js/lib/cep-bridge.js"></script>
+  <script src="js/data/library.js"></script>
+  <script src="js/data/previews.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
