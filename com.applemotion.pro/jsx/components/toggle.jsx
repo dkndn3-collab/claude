@@ -92,6 +92,7 @@ AMUI.Components.toggle = (function () {
     layer.property('ADBE Transform Group').property('ADBE Position')
          .setValue([parent.width / 2, parent.height / 2]);
 
+    AMUI.Motion.animateLayer(layer, parent, p.anim);
     layer.selected = true;
     return comp.name + ' added';
   }

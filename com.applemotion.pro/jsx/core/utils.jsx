@@ -214,8 +214,9 @@ AMUI.U = (function () {
 
   function pickFont(weight) {
     var suffix = weight === 'bold' ? '-Bold' : weight === 'semibold' ? '-Semibold' : '-Regular';
-    // AE resolves by PostScript name; fall back through the stack if missing.
-    return FONT_STACK[0].replace(/\s/g, '') + suffix;
+    // The user's chosen default font (set from the panel), else SF Pro.
+    var base = AMUI.font || FONT_STACK[0].replace(/\s/g, '');
+    return base + suffix;
   }
 
   /* --------------------------------------------------------------- effects */
@@ -288,6 +289,21 @@ AMUI.U = (function () {
     if (prop.numKeys < 2) return;
     U.ease(prop, 1, 20, 16);
     U.ease(prop, prop.numKeys, 84, 20);
+  };
+
+  /**
+   * Apply an approximation of a cubic-bezier [x1,y1,x2,y2] to a two-keyframe
+   * property using AE temporal ease. The x controls set how much the curve
+   * eases leaving the first key and arriving at the last, which is the part
+   * the eye reads; it matches the same bezier the SVG preview uses.
+   */
+  U.easeBezier = function (prop, bezier) {
+    if (prop.numKeys < 2 || !bezier) return;
+    function clamp(v) { return Math.max(5, Math.min(95, v)); }
+    var outFirst = clamp(bezier[0] * 100);
+    var inLast   = clamp((1 - bezier[2]) * 100);
+    U.ease(prop, 1, 16, outFirst);
+    U.ease(prop, prop.numKeys, inLast, 16);
   };
 
   return U;

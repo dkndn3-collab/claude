@@ -1,29 +1,39 @@
 /**
- * library.js
- * Every component, parameter and motion preset in the panel is defined here.
- * The browser UI and the parameter form are both generated from this file —
- * adding a component means adding an entry here plus a generator in jsx/components/.
+ * library.js — every component in the panel is defined here (§25, §26).
+ *
+ * A component is one entry with a shared, configurable shape: variants and
+ * styles are data, not duplicated code (§26). The builder reads this file to
+ * lay out its sections — Category · Component · Variant · Style · Content ·
+ * Animation — and jsx/api.jsx looks up AMUI.Components[type] by id.
+ *
+ * Design values (palettes, glass materials, radii, durations) come from
+ * TOKENS; animation presets come from MOTION. Nothing is hardcoded twice.
  */
 (function (global) {
   'use strict';
 
-  var PALETTES = [
-    { id: 'appleDark',   name: 'Apple Dark',   accent: '#0A84FF', surface: '#1C1C1E', text: '#FFFFFF' },
-    { id: 'appleLight',  name: 'Apple Light',  accent: '#007AFF', surface: '#F2F2F7', text: '#1C1C1E' },
-    { id: 'systemBlue',  name: 'System Blue',  accent: '#0A84FF', surface: '#1C1C1E', text: '#FFFFFF' },
-    { id: 'systemGreen', name: 'System Green', accent: '#30D158', surface: '#1C1C1E', text: '#FFFFFF' },
-    { id: 'systemRed',   name: 'System Red',   accent: '#FF453A', surface: '#1C1C1E', text: '#FFFFFF' },
-    { id: 'systemOrange',name: 'System Orange',accent: '#FF9F0A', surface: '#1C1C1E', text: '#FFFFFF' },
-    { id: 'glassNeutral',name: 'Glass Neutral',accent: '#8E8E93', surface: '#2C2C2E', text: '#FFFFFF' }
-  ];
+  var TK = global.TOKENS;
+  var M = global.MOTION;
 
-  var GLASS_PRESETS = [
-    { id: 'clear',   name: 'Clear Glass',   blur: 14, tintOpacity: 8,  border: 40, highlight: 55 },
-    { id: 'frosted', name: 'Frosted Glass', blur: 34, tintOpacity: 16, border: 34, highlight: 45 },
-    { id: 'dark',    name: 'Dark Glass',    blur: 26, tintOpacity: 42, border: 22, highlight: 28 },
-    { id: 'white',   name: 'White Glass',   blur: 26, tintOpacity: 30, border: 60, highlight: 70 },
-    { id: 'soft',    name: 'Soft Glass',    blur: 44, tintOpacity: 12, border: 26, highlight: 38 },
-    { id: 'liquid',  name: 'Liquid Glass',  blur: 20, tintOpacity: 10, border: 70, highlight: 85 }
+  function opt(x) { return { value: x.id, label: x.name }; }
+  var PALETTE_OPTS = TK.palettes.map(opt);
+  var GLASS_OPTS = TK.glass.map(opt);
+
+  // Shared parameter fragments, so every surface exposes the same radius/glass
+  // controls with the same ranges — a card and a button round the same way.
+  function radius(v)   { return { key: 'radius', label: 'Radius', type: 'number', value: v, min: 0, max: 64, step: 1, unit: 'px', group: 'style' }; }
+  function palette(v)  { return { key: 'palette', label: 'Palette', type: 'select', value: v, options: PALETTE_OPTS, group: 'style' }; }
+  function glassStyle(v){ return { key: 'glassPreset', label: 'Material', type: 'select', value: v, options: GLASS_OPTS, group: 'style', showIf: 'glass' }; }
+  function shadow(v)   { return { key: 'shadow', label: 'Shadow', type: 'bool', value: v, group: 'style' }; }
+
+  /* ---------------------------------------------------------------------- */
+  /* Categories (§25 top-level grouping)                                     */
+  /* ---------------------------------------------------------------------- */
+  var CATEGORIES = [
+    { id: 'all',  name: 'All' },
+    { id: 'ui',   name: 'Core UI' },
+    { id: 'data', name: 'Data' },
+    { id: 'ios',  name: 'System UI' }
   ];
 
   /* ---------------------------------------------------------------------- */
@@ -31,91 +41,193 @@
   /* ---------------------------------------------------------------------- */
 
   var COMPONENTS = [
+    /* ---- Glass card --------------------------------------------------- */
     {
-      id: 'card',
-      name: 'Glass card',
-      category: 'UI',
+      id: 'card', name: 'Glass Card', category: 'ui',
       tags: ['card', 'glass', 'surface', 'kpi', 'stat', 'dashboard'],
-      blurb: 'Rounded surface with icon, title, subtitle and value. Responsive to width and height.',
+      blurb: 'Rounded surface with icon, title, subtitle and value.',
+      defaultAnim: 'spring',
+      variants: [
+        { id: 'basic',    name: 'Basic',    set: { glass: false, shadow: true,  palette: 'appleDark' } },
+        { id: 'glass',    name: 'Glass',    set: { glass: true,  glassPreset: 'frosted', shadow: true } },
+        { id: 'dark',     name: 'Dark',     set: { glass: false, palette: 'appleDark', shadow: true } },
+        { id: 'light',    name: 'Light',    set: { glass: false, palette: 'appleLight', shadow: true } },
+        { id: 'minimal',  name: 'Minimal',  set: { glass: false, shadow: false, icon: false } },
+        { id: 'elevated', name: 'Elevated', set: { glass: true,  glassPreset: 'liquid', shadow: true } },
+        { id: 'compact',  name: 'Compact',  set: { width: 300, height: 150, padding: 20 } },
+        { id: 'large',    name: 'Large',    set: { width: 560, height: 300, padding: 36 } }
+      ],
       params: [
-        { key: 'width',    label: 'Width',    type: 'number', value: 420, min: 120, max: 1600, step: 10, unit: 'px' },
-        { key: 'height',   label: 'Height',   type: 'number', value: 220, min: 80,  max: 1200, step: 10, unit: 'px' },
-        { key: 'radius',   label: 'Radius',   type: 'number', value: 28,  min: 0,   max: 200,  step: 1,  unit: 'px' },
-        { key: 'padding',  label: 'Padding',  type: 'number', value: 28,  min: 0,   max: 160,  step: 1,  unit: 'px' },
-        { key: 'glass',    label: 'Glass',    type: 'bool',   value: true },
-        { key: 'glassPreset', label: 'Glass style', type: 'select', value: 'frosted', options: GLASS_PRESETS.map(mapOpt), showIf: 'glass' },
-        { key: 'blur',     label: 'Blur',     type: 'number', value: 34,  min: 0,   max: 120,  step: 1, showIf: 'glass' },
-        { key: 'shadow',   label: 'Shadow',   type: 'bool',   value: true },
-        { key: 'icon',     label: 'Icon',     type: 'bool',   value: true },
-        { key: 'title',    label: 'Title',    type: 'text',   value: 'Monthly revenue' },
-        { key: 'subtitle', label: 'Subtitle', type: 'text',   value: 'Last 30 days' },
-        { key: 'value',    label: 'Value',    type: 'text',   value: '$48,920' },
-        { key: 'palette',  label: 'Palette',  type: 'select', value: 'appleDark', options: PALETTES.map(mapOpt) }
+        { key: 'variant', label: 'Variant', type: 'select', value: 'glass', options: null, group: 'variant' },
+        { key: 'width',   label: 'Width',   type: 'number', value: 420, min: 120, max: 1600, step: 10, unit: 'px', group: 'content' },
+        { key: 'height',  label: 'Height',  type: 'number', value: 220, min: 80,  max: 1200, step: 10, unit: 'px', group: 'content' },
+        radius(24), { key: 'padding', label: 'Padding', type: 'number', value: 28, min: 0, max: 64, step: 1, unit: 'px', group: 'style' },
+        { key: 'glass', label: 'Glass', type: 'bool', value: true, group: 'style' },
+        glassStyle('frosted'),
+        { key: 'blur', label: 'Blur', type: 'number', value: 34, min: 0, max: 120, step: 1, group: 'style', showIf: 'glass' },
+        shadow(true),
+        { key: 'icon', label: 'Icon', type: 'bool', value: true, group: 'content' },
+        { key: 'title', label: 'Title', type: 'text', value: 'Monthly revenue', group: 'content' },
+        { key: 'subtitle', label: 'Subtitle', type: 'text', value: 'Last 30 days', group: 'content' },
+        { key: 'value', label: 'Value', type: 'text', value: '$48,920', group: 'content' },
+        palette('appleDark')
       ]
     },
+
+    /* ---- Button ------------------------------------------------------- */
     {
-      id: 'notification',
-      name: 'Notification banner',
-      category: 'iOS',
+      id: 'button', name: 'Button', category: 'ui',
+      tags: ['button', 'cta', 'action', 'pill', 'glass', 'ghost'],
+      blurb: 'Tap target in seven variants, from filled to floating.',
+      defaultAnim: 'snappy',
+      variants: [
+        { id: 'primary',   name: 'Primary',   set: { shadow: false } },
+        { id: 'secondary', name: 'Secondary', set: { shadow: false } },
+        { id: 'glass',     name: 'Glass',     set: { glass: true, glassPreset: 'clear', shadow: true } },
+        { id: 'ghost',     name: 'Ghost',     set: { shadow: false } },
+        { id: 'icon',      name: 'Icon',      set: { shadow: false } },
+        { id: 'pill',      name: 'Pill',      set: { shadow: false } },
+        { id: 'floating',  name: 'Floating',  set: { shadow: true } }
+      ],
+      params: [
+        { key: 'variant', label: 'Variant', type: 'select', value: 'primary', options: null, group: 'variant' },
+        { key: 'label', label: 'Label', type: 'text', value: 'Continue', group: 'content' },
+        { key: 'width',  label: 'Width',  type: 'number', value: 260, min: 64, max: 800, step: 4, unit: 'px', group: 'content' },
+        { key: 'height', label: 'Height', type: 'number', value: 64, min: 36, max: 120, step: 2, unit: 'px', group: 'content' },
+        radius(16),
+        { key: 'glass', label: 'Glass', type: 'bool', value: false, group: 'style' },
+        glassStyle('clear'),
+        shadow(false),
+        palette('appleDark')
+      ]
+    },
+
+    /* ---- Notification ------------------------------------------------- */
+    {
+      id: 'notification', name: 'Notification', category: 'ios',
       tags: ['notification', 'banner', 'alert', 'ios', 'push', 'toast'],
-      blurb: 'iOS-style push banner with app icon, app name, timestamp and message.',
+      blurb: 'iOS push banner: icon, app name, timestamp and message.',
+      defaultAnim: 'gentleSpring',
+      variants: [
+        { id: 'minimal', name: 'Minimal', set: { glass: false, shadow: false } },
+        { id: 'glass',   name: 'Glass',   set: { glass: true, glassPreset: 'dark', shadow: true } },
+        { id: 'system',  name: 'System',  set: { glass: true, glassPreset: 'frosted', palette: 'appleLight' } },
+        { id: 'dark',    name: 'Dark',    set: { glass: true, glassPreset: 'dark', palette: 'appleDark' } },
+        { id: 'success', name: 'Success', set: { glass: true, glassPreset: 'dark' } },
+        { id: 'error',   name: 'Error',   set: { glass: true, glassPreset: 'dark' } },
+        { id: 'warning', name: 'Warning', set: { glass: true, glassPreset: 'dark' } }
+      ],
       params: [
-        { key: 'width',    label: 'Width',    type: 'number', value: 700, min: 240, max: 1600, step: 10, unit: 'px' },
-        { key: 'radius',   label: 'Radius',   type: 'number', value: 34,  min: 0,   max: 120,  step: 1,  unit: 'px' },
-        { key: 'appName',  label: 'App name', type: 'text',   value: 'MESSAGES' },
-        { key: 'title',    label: 'Title',    type: 'text',   value: 'Sarah Chen' },
-        { key: 'message',  label: 'Message',  type: 'text',   value: 'Sending over the final cut now' },
-        { key: 'time',     label: 'Time',     type: 'text',   value: 'now' },
-        { key: 'glass',    label: 'Glass',    type: 'bool',   value: true },
-        { key: 'glassPreset', label: 'Glass style', type: 'select', value: 'dark', options: GLASS_PRESETS.map(mapOpt), showIf: 'glass' },
-        { key: 'blur',     label: 'Blur',     type: 'number', value: 26,  min: 0,   max: 120, step: 1, showIf: 'glass' },
-        { key: 'shadow',   label: 'Shadow',   type: 'bool',   value: true },
-        { key: 'palette',  label: 'Palette',  type: 'select', value: 'appleDark', options: PALETTES.map(mapOpt) }
+        { key: 'variant', label: 'Variant', type: 'select', value: 'glass', options: null, group: 'variant' },
+        { key: 'width', label: 'Width', type: 'number', value: 700, min: 240, max: 1600, step: 10, unit: 'px', group: 'content' },
+        radius(34),
+        { key: 'appName', label: 'App name', type: 'text', value: 'MESSAGES', group: 'content' },
+        { key: 'title', label: 'Title', type: 'text', value: 'Sarah Chen', group: 'content' },
+        { key: 'message', label: 'Message', type: 'text', value: 'Sending over the final cut now', group: 'content' },
+        { key: 'time', label: 'Time', type: 'text', value: 'now', group: 'content' },
+        { key: 'glass', label: 'Glass', type: 'bool', value: true, group: 'style' },
+        glassStyle('dark'),
+        { key: 'blur', label: 'Blur', type: 'number', value: 26, min: 0, max: 120, step: 1, group: 'style', showIf: 'glass' },
+        shadow(true),
+        palette('appleDark')
       ]
     },
+
+    /* ---- Toggle ------------------------------------------------------- */
     {
-      id: 'toggle',
-      name: 'Toggle switch',
-      category: 'iOS',
+      id: 'toggle', name: 'Toggle Switch', category: 'ios',
       tags: ['toggle', 'switch', 'settings', 'control', 'ios'],
-      blurb: 'Settings-row switch. The knob and track colour are driven by one On/Off control.',
+      blurb: 'Settings switch. One On/Off control drives track and knob.',
+      defaultAnim: 'snappy',
+      variants: [
+        { id: 'default',  name: 'Default',  set: { size: 104, showLabel: false } },
+        { id: 'large',    name: 'Large',    set: { size: 160, showLabel: false } },
+        { id: 'labelled', name: 'Labelled', set: { size: 104, showLabel: true } }
+      ],
       params: [
-        { key: 'size',     label: 'Track width', type: 'number', value: 104, min: 40, max: 400, step: 2, unit: 'px' },
-        { key: 'on',       label: 'Starts on',   type: 'bool',   value: false },
-        { key: 'animate',  label: 'Animate the flip', type: 'bool', value: true },
-        { key: 'label',    label: 'Label',       type: 'text',   value: 'Low Power Mode' },
-        { key: 'showLabel',label: 'Show label',  type: 'bool',   value: true },
-        { key: 'palette',  label: 'Palette',     type: 'select', value: 'systemGreen', options: PALETTES.map(mapOpt) }
+        { key: 'variant', label: 'Variant', type: 'select', value: 'labelled', options: null, group: 'variant' },
+        { key: 'size', label: 'Track width', type: 'number', value: 104, min: 40, max: 400, step: 2, unit: 'px', group: 'content' },
+        { key: 'on', label: 'Starts on', type: 'bool', value: false, group: 'content' },
+        { key: 'animate', label: 'Animate the flip', type: 'bool', value: true, group: 'content' },
+        { key: 'label', label: 'Label', type: 'text', value: 'Low Power Mode', group: 'content' },
+        { key: 'showLabel', label: 'Show label', type: 'bool', value: true, group: 'content' },
+        palette('systemGreen')
+      ]
+    },
+
+    /* ---- Chart -------------------------------------------------------- */
+    {
+      id: 'chart', name: 'Chart', category: 'data',
+      tags: ['chart', 'graph', 'bar', 'line', 'area', 'data', 'analytics'],
+      blurb: 'Procedural bar / line / area chart that builds itself in.',
+      defaultAnim: 'gentleSpring',
+      variants: [
+        { id: 'bars', name: 'Bars', set: { chartKind: 'bar' } },
+        { id: 'line', name: 'Line', set: { chartKind: 'line' } },
+        { id: 'area', name: 'Area', set: { chartKind: 'area' } }
+      ],
+      params: [
+        { key: 'variant', label: 'Variant', type: 'select', value: 'bars', options: null, group: 'variant' },
+        { key: 'chartKind', label: 'Kind', type: 'select', value: 'bar', group: 'hidden',
+          options: [{ value: 'bar', label: 'Bar' }, { value: 'line', label: 'Line' }, { value: 'area', label: 'Area' }] },
+        { key: 'width', label: 'Width', type: 'number', value: 560, min: 200, max: 1600, step: 10, unit: 'px', group: 'content' },
+        { key: 'height', label: 'Height', type: 'number', value: 320, min: 120, max: 1000, step: 10, unit: 'px', group: 'content' },
+        { key: 'bars', label: 'Points', type: 'number', value: 7, min: 3, max: 16, step: 1, group: 'content' },
+        { key: 'seed', label: 'Shape (seed)', type: 'number', value: 4, min: 1, max: 40, step: 1, group: 'content' },
+        palette('appleDark')
+      ]
+    },
+
+    /* ---- Progress ----------------------------------------------------- */
+    {
+      id: 'progress', name: 'Progress', category: 'data',
+      tags: ['progress', 'bar', 'ring', 'loader', 'meter'],
+      blurb: 'Bar or ring that fills to a value as it animates in.',
+      defaultAnim: 'gentleSpring',
+      variants: [
+        { id: 'bar',  name: 'Bar',  set: {} },
+        { id: 'ring', name: 'Ring', set: {} }
+      ],
+      params: [
+        { key: 'variant', label: 'Variant', type: 'select', value: 'bar', options: null, group: 'variant' },
+        { key: 'value', label: 'Percent', type: 'number', value: 68, min: 0, max: 100, step: 1, unit: '%', group: 'content' },
+        { key: 'width', label: 'Width', type: 'number', value: 480, min: 120, max: 1400, step: 10, unit: 'px', group: 'content' },
+        palette('appleDark')
+      ]
+    },
+
+    /* ---- Badge -------------------------------------------------------- */
+    {
+      id: 'badge', name: 'Badge', category: 'ui',
+      tags: ['badge', 'tag', 'chip', 'label', 'pill', 'status'],
+      blurb: 'Small status pill in solid, glass or semantic colours.',
+      defaultAnim: 'snappy',
+      variants: [
+        { id: 'pill',    name: 'Pill',    set: {} },
+        { id: 'square',  name: 'Square',  set: {} },
+        { id: 'glass',   name: 'Glass',   set: {} },
+        { id: 'success', name: 'Success', set: {} },
+        { id: 'error',   name: 'Error',   set: {} },
+        { id: 'warning', name: 'Warning', set: {} }
+      ],
+      params: [
+        { key: 'variant', label: 'Variant', type: 'select', value: 'pill', options: null, group: 'variant' },
+        { key: 'label', label: 'Text', type: 'text', value: 'New', group: 'content' },
+        palette('systemBlue')
       ]
     }
   ];
 
+  // Fill each component's `variant` param options from its own variants list.
+  COMPONENTS.forEach(function (c) {
+    if (!c.variants) return;
+    var vp = c.params.filter(function (p) { return p.key === 'variant'; })[0];
+    if (vp && !vp.options) vp.options = c.variants.map(function (v) { return { value: v.id, label: v.name }; });
+  });
+
   /* ---------------------------------------------------------------------- */
-  /* Motion presets — applied to whatever layers are selected                */
+  /* Helpers                                                                 */
   /* ---------------------------------------------------------------------- */
-
-  var MOTION = [
-    { id: 'appleEase',   name: 'Apple ease',   category: 'Ease',   duration: 0.6,  blurb: 'The house curve. Slow out, fast settle.' },
-    { id: 'spring',      name: 'Spring',       category: 'Spring', duration: 0.9,  blurb: 'Springs to rest with visible bounce.' },
-    { id: 'smoothSpring',name: 'Smooth spring',category: 'Spring', duration: 0.8,  blurb: 'One soft overshoot, no wobble.' },
-    { id: 'overshoot',   name: 'Overshoot',    category: 'Spring', duration: 0.7,  blurb: 'Passes the target once, comes back.' },
-    { id: 'bounce',      name: 'Bounce',       category: 'Spring', duration: 1.0,  blurb: 'Heavier, gravity-flavoured settle.' },
-    { id: 'elastic',     name: 'Elastic',      category: 'Spring', duration: 1.2,  blurb: 'Long decay, loose and rubbery.' },
-    { id: 'fadeUp',      name: 'Fade up',      category: 'Entry',  duration: 0.7,  blurb: 'Rises and fades in from below.' },
-    { id: 'scaleIn',     name: 'Scale in',     category: 'Entry',  duration: 0.6,  blurb: 'Grows from 88% with an Apple ease.' },
-    { id: 'blurIn',      name: 'Blur in',      category: 'Entry',  duration: 0.8,  blurb: 'Focus pull plus fade.' },
-    { id: 'slideIn',     name: 'Slide in',     category: 'Entry',  duration: 0.7,  blurb: 'Enters from off-frame left.' }
-  ];
-
-  var QUICK_ACTIONS = [
-    { id: 'addGlass',  name: 'Add glass',  blurb: 'Frosts everything behind the selected layer.' },
-    { id: 'addShadow', name: 'Add shadow', blurb: 'Apple-weight drop shadow.' },
-    { id: 'center',    name: 'Center',     blurb: 'Centres selection in the comp.' },
-    { id: 'stagger',   name: 'Stagger',    blurb: 'Offsets selected layers by 2 frames each.' },
-    { id: 'precompose',name: 'Precompose', blurb: 'Wraps selection in a named precomp.' }
-  ];
-
-  function mapOpt(p) { return { value: p.id, label: p.name }; }
 
   function defaults(component) {
     var out = {};
@@ -123,21 +235,24 @@
     return out;
   }
 
+  function variantSet(component, variantId) {
+    if (!component.variants) return {};
+    for (var i = 0; i < component.variants.length; i++) {
+      if (component.variants[i].id === variantId) return component.variants[i].set || {};
+    }
+    return {};
+  }
+
   global.LIBRARY = {
-    palettes: PALETTES,
-    glassPresets: GLASS_PRESETS,
+    categories: CATEGORIES,
+    palettes: TK.palettes,
+    glassPresets: TK.glass,
     components: COMPONENTS,
-    motion: MOTION,
-    quickActions: QUICK_ACTIONS,
+    motion: M.presets,
     defaults: defaults,
-    paletteById: function (id) {
-      for (var i = 0; i < PALETTES.length; i++) if (PALETTES[i].id === id) return PALETTES[i];
-      return PALETTES[0];
-    },
-    glassById: function (id) {
-      for (var i = 0; i < GLASS_PRESETS.length; i++) if (GLASS_PRESETS[i].id === id) return GLASS_PRESETS[i];
-      return GLASS_PRESETS[1];
-    },
+    variantSet: variantSet,
+    paletteById: TK.paletteById,
+    glassById: TK.glassById,
     componentById: function (id) {
       for (var i = 0; i < COMPONENTS.length; i++) if (COMPONENTS[i].id === id) return COMPONENTS[i];
       return null;

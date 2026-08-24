@@ -29,6 +29,15 @@ AMUI.Glass = (function () {
     var blur = comp.layers.addSolid([0, 0, 0], 'Glass Blur', comp.width, comp.height, 1);
     blur.adjustmentLayer = true;
     U.fastBlur(blur, g.blur, U.ref('Blur'));
+    // Real device glass lifts the saturation of what shows through it, so it
+    // reads as living colour rather than flat grey. Lift = material saturation.
+    if (g.saturation && g.saturation !== 100) {
+      try {
+        var hs = blur.property('ADBE Effect Parade').addProperty('ADBE HUE SATURATION');
+        hs.name = 'Glass Vibrance';
+        hs.property('ADBE HUE SATURATION-0004').setValue(g.saturation - 100); // Master Saturation
+      } catch (e) { /* older AE without this matchName — skip, still looks fine */ }
+    }
     out.blur = blur;
 
     /* 2 — clip it to the shape ----------------------------------------- */

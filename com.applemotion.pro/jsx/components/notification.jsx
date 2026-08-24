@@ -28,6 +28,11 @@ AMUI.Components.notification = (function () {
   function create(p) {
     var parent = U.activeComp();
     var pal = T.palette(p.palette);
+    // Status variants recolour the app icon with a semantic accent.
+    var accent = pal.accent;
+    if (p.variant === 'success') accent = T.semantic.success;
+    else if (p.variant === 'error') accent = T.semantic.error;
+    else if (p.variant === 'warning') accent = T.semantic.warning;
     var height = p.width * RATIO;
 
     var comp = U.makeComp('NOTIFICATION', p.width + 400, height + 320, parent);
@@ -37,7 +42,7 @@ AMUI.Components.notification = (function () {
     U.slider(ctrl, 'Radius', p.radius);
     U.slider(ctrl, 'Blur', p.glass ? p.blur : 0);
     U.slider(ctrl, 'Shadow', p.shadow ? 100 : 0);
-    U.colorControl(ctrl, 'Accent', pal.accent);
+    U.colorControl(ctrl, 'Accent', accent);
 
     var sizeExpr = 'w = ' + U.ref('Width') + ';\n[w, w * ' + RATIO + ']';
     var roundExpr = 'Math.min(' + U.ref('Radius') + ', ' + U.ref('Width') + ' * ' + (RATIO / 2) + ')';
@@ -131,6 +136,7 @@ AMUI.Components.notification = (function () {
     layer.property('ADBE Transform Group').property('ADBE Position')
          .setValue([parent.width / 2, parent.height * 0.22]);
 
+    AMUI.Motion.animateLayer(layer, parent, p.anim);
     layer.selected = true;
     return comp.name + ' added';
   }

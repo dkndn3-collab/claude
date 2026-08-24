@@ -1,21 +1,26 @@
 /**
  * app.js — panel controller.
  *
- * Three views (components / motion / actions) render from LIBRARY, one search
- * box filters all of them, and a slide-up sheet collects parameters before
- * handing off to ExtendScript through CEP.call().
+ * Three views (components / motion / actions). Component tiles play their real
+ * entrance animation on hover (§24). Clicking one opens the builder (§25): a
+ * live hero preview with a Play button, then Variant · Style · Content ·
+ * Animation sections — every value flows to the same ExtendScript call that
+ * builds the After Effects composition.
  */
 (function () {
   'use strict';
 
-  var L = window.LIBRARY;
-  var P = window.PREVIEWS;
+  var L = window.LIBRARY, P = window.PREVIEWS, M = window.MOTION, A = window.ANIMATOR, TK = window.TOKENS;
+
+  var reduceMotion = false;
+  try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
   var el = {
     search:      document.getElementById('search'),
     searchWrap:  document.getElementById('searchWrap'),
     searchClear: document.getElementById('searchClear'),
     tabs:        Array.prototype.slice.call(document.querySelectorAll('.tab')),
+    body:        document.getElementById('body'),
     views: {
       components: document.getElementById('view-components'),
       motion:     document.getElementById('view-motion'),
@@ -27,20 +32,37 @@
     sheetTitle: document.getElementById('sheetTitle'),
     sheetSub:   document.getElementById('sheetSub'),
     sheetHero:  document.getElementById('sheetHero'),
-    sheetFields:document.getElementById('sheetFields'),
+    sheetPlay:  document.getElementById('sheetPlay'),
+    sheetSections: document.getElementById('sheetSections'),
     sheetBack:  document.getElementById('sheetBack'),
     sheetReset: document.getElementById('sheetReset'),
     sheetCreate:document.getElementById('sheetCreate')
   };
 
+  var settings = loadSettings();
+
   var state = {
     view: 'components',
     query: '',
-    component: null,   // the component definition currently in the sheet
-    params: null       // its live parameter values
+    category: 'all',
+    component: null,
+    params: null,
+    anim: null
   };
 
-  /* ---------------------------------------------------------------- theme */
+  /* ------------------------------------------------------------ settings */
+
+  function loadSettings() {
+    var s = { font: 'sf' };
+    try { var raw = localStorage.getItem('amui.settings'); if (raw) s = JSON.parse(raw); } catch (e) {}
+    if (!s.font) s.font = 'sf';
+    return s;
+  }
+  function saveSettings() {
+    try { localStorage.setItem('amui.settings', JSON.stringify(settings)); } catch (e) {}
+  }
+
+  /* --------------------------------------------------------------- theme */
 
   function applyHostTheme() {
     var luma = window.CEP.hostBackgroundLuma();
@@ -51,7 +73,6 @@
   /* --------------------------------------------------------------- status */
 
   var statusTimer = null;
-
   function setStatus(msg, state_) {
     clearTimeout(statusTimer);
     el.statusMsg.textContent = msg;
@@ -69,92 +90,102 @@
   function matches(haystack, query) {
     if (!query) return true;
     var text = haystack.join(' ').toLowerCase();
-    return query.split(/\s+/).every(function (word) { return text.indexOf(word) !== -1; });
+    return query.split(/\s+/).every(function (w) { return text.indexOf(w) !== -1; });
   }
-
   function filteredComponents() {
     return L.components.filter(function (c) {
-      return matches([c.id, c.name, c.category, c.blurb].concat(c.tags), state.query);
+      if (state.category !== 'all' && c.category !== state.category) return false;
+      return matches([c.id, c.name, c.category].concat(c.tags), state.query);
     });
   }
-
   function filteredMotion() {
-    return L.motion.filter(function (m) {
-      return matches([m.id, m.name, m.category, m.blurb], state.query);
-    });
+    return M.presets.filter(function (m) { return matches([m.id, m.name, m.category, m.blurb], state.query); });
   }
-
   function filteredActions() {
-    return L.quickActions.filter(function (a) {
-      return matches([a.id, a.name, a.blurb], state.query);
-    });
+    return QUICK_ACTIONS.filter(function (a) { return matches([a.id, a.name, a.blurb], state.query); });
   }
 
-  /* --------------------------------------------------------------- render */
+  var QUICK_ACTIONS = [
+    { id: 'addGlass',  name: 'Add glass',  blurb: 'Frosts everything behind the selected layer.' },
+    { id: 'addShadow', name: 'Add shadow', blurb: 'Apple-weight drop shadow.' },
+    { id: 'center',    name: 'Center',     blurb: 'Centres selection in the comp.' },
+    { id: 'stagger',   name: 'Stagger',    blurb: 'Offsets selected layers by 2 frames each.' },
+    { id: 'precompose',name: 'Precompose', blurb: 'Wraps selection in a named precomp.' }
+  ];
 
+  /* --------------------------------------------------------------- helpers */
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
   function emptyState(what) {
     return '<div class="empty"><strong>No ' + what + ' match “' + escapeHtml(state.query) + '”</strong>' +
            'Try a shorter word, like “glass” or “spring”.</div>';
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+  /* --------------------------------------------------------------- render */
 
   function renderComponents() {
-    var list = filteredComponents();
     var view = el.views.components;
-    if (!list.length) { view.innerHTML = emptyState('components'); return; }
+    var cats = '<div class="cats">' + L.categories.map(function (c) {
+      return '<button class="chip' + (state.category === c.id ? ' on' : '') + '" data-cat="' + c.id + '">' + escapeHtml(c.name) + '</button>';
+    }).join('') + '</div>';
 
-    var html = '<div class="section-label"><span>Components</span><span>' + list.length + '</span></div><div class="grid">';
+    var list = filteredComponents();
+    if (!list.length) { view.innerHTML = cats + emptyState('components'); return; }
+
+    var html = cats + '<div class="section-label"><span>Components</span><span>' + list.length + '</span></div><div class="grid">';
     list.forEach(function (c) {
       var art = P.render(c.id, L.defaults(c), 260, 146);
       html += '<button class="tile" data-component="' + c.id + '" title="' + escapeHtml(c.blurb) + '">' +
                 '<span class="tile-art">' + art + '</span>' +
                 '<span class="tile-meta">' +
                   '<span class="tile-name">' + escapeHtml(c.name) + '</span>' +
-                  '<span class="tile-cat">' + escapeHtml(c.category) + '</span>' +
+                  '<span class="tile-cat">' + escapeHtml((c.variants ? c.variants.length + ' variants · ' : '')) + labelFor(c.category) + '</span>' +
                 '</span>' +
               '</button>';
     });
     view.innerHTML = html + '</div>';
   }
 
-  /** Tiny curve thumbnail so each easing reads differently at a glance. */
-  function curveArt(id) {
-    var paths = {
-      appleEase:    'M2,20 C10,20 12,2 32,2',
-      spring:       'M2,20 C8,20 10,-3 15,4 C19,9 21,0 25,3 C28,5 29,2 32,2',
-      smoothSpring: 'M2,20 C10,20 13,0 19,1 C24,2 27,3 32,2',
-      overshoot:    'M2,20 C10,20 14,-2 20,0 C26,2 28,2 32,2',
-      bounce:       'M2,20 C8,20 12,2 16,2 C19,2 19,9 22,9 C25,9 25,3 28,3 C30,3 30,2 32,2',
-      elastic:      'M2,20 C7,20 9,-4 13,3 C16,8 18,-1 22,4 C25,8 27,0 32,2',
-      fadeUp:       'M2,20 C12,20 14,4 32,2',
-      scaleIn:      'M2,20 C9,20 13,3 32,2',
-      blurIn:       'M2,20 C14,20 16,4 32,2',
-      slideIn:      'M2,20 C11,20 13,3 32,2'
-    };
-    return '<svg viewBox="0 0 34 22" aria-hidden="true">' +
-             '<path d="' + (paths[id] || paths.appleEase) + '" fill="none" ' +
-             'stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/>' +
-           '</svg>';
+  function labelFor(catId) {
+    for (var i = 0; i < L.categories.length; i++) if (L.categories[i].id === catId) return L.categories[i].name;
+    return catId;
+  }
+
+  /** A curve thumbnail drawn straight from the preset's own maths. */
+  function curveArt(preset) {
+    var W = 34, H = 22, x0 = 2, x1 = 32, yTop = 2, yBot = 20;
+    function y(v) { return Math.max(-4, Math.min(H, yBot - v * (yBot - yTop))); }
+    var d;
+    if (preset.spring) {
+      var pts = [];
+      for (var i = 0; i <= 24; i++) {
+        var t = i / 24;
+        var v = M.springValue(t * preset.duration, M.coeffs(preset), 1 + (preset.overshoot || 0) / 40);
+        pts.push((x0 + (x1 - x0) * t).toFixed(1) + ',' + y(v).toFixed(1));
+      }
+      d = 'M' + pts.join(' L');
+    } else {
+      var b = preset.easing;
+      var c1x = x0 + (x1 - x0) * b[0], c1y = yBot + (yTop - yBot) * b[1];
+      var c2x = x0 + (x1 - x0) * b[2], c2y = yBot + (yTop - yBot) * b[3];
+      d = 'M' + x0 + ',' + yBot + ' C' + c1x.toFixed(1) + ',' + c1y.toFixed(1) + ' ' + c2x.toFixed(1) + ',' + c2y.toFixed(1) + ' ' + x1 + ',' + yTop;
+    }
+    return '<svg viewBox="0 0 34 22" aria-hidden="true"><path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
 
   function renderMotion() {
     var list = filteredMotion();
     var view = el.views.motion;
     if (!list.length) { view.innerHTML = emptyState('presets'); return; }
-
-    var html = '<div class="section-label"><span>Apply to selected layers</span><span>' + list.length + '</span></div>' +
-               '<div class="row-list">';
+    var html = '<div class="section-label"><span>Apply to selected layers</span><span>' + list.length + '</span></div><div class="row-list">';
     list.forEach(function (m) {
       html += '<button class="row" data-motion="' + m.id + '">' +
-                '<span class="row-curve">' + curveArt(m.id) + '</span>' +
-                '<span class="row-text">' +
-                  '<span class="row-name">' + escapeHtml(m.name) + '</span>' +
-                  '<span class="row-blurb">' + escapeHtml(m.blurb) + '</span>' +
-                '</span>' +
-                '<span class="row-dur">' + m.duration.toFixed(1) + 's</span>' +
+                '<span class="row-curve">' + curveArt(m) + '</span>' +
+                '<span class="row-text"><span class="row-name">' + escapeHtml(m.name) + '</span>' +
+                '<span class="row-blurb">' + escapeHtml(m.blurb) + '</span></span>' +
+                '<span class="row-dur">' + m.duration.toFixed(2) + 's</span>' +
               '</button>';
     });
     view.innerHTML = html + '</div>';
@@ -164,41 +195,25 @@
     var list = filteredActions();
     var view = el.views.actions;
     if (!list.length) { view.innerHTML = emptyState('actions'); return; }
-
-    var html = '<div class="section-label"><span>Quick actions</span><span>' + list.length + '</span></div>' +
-               '<div class="row-list">';
+    var html = '<div class="section-label"><span>Quick actions</span><span>' + list.length + '</span></div><div class="row-list">';
     list.forEach(function (a) {
-      html += '<button class="row" data-action="' + a.id + '">' +
-                '<span class="row-text">' +
-                  '<span class="row-name">' + escapeHtml(a.name) + '</span>' +
-                  '<span class="row-blurb">' + escapeHtml(a.blurb) + '</span>' +
-                '</span>' +
-              '</button>';
+      html += '<button class="row" data-action="' + a.id + '"><span class="row-text">' +
+                '<span class="row-name">' + escapeHtml(a.name) + '</span>' +
+                '<span class="row-blurb">' + escapeHtml(a.blurb) + '</span></span></button>';
     });
     view.innerHTML = html + '</div>';
   }
 
-  function renderAll() {
-    renderComponents();
-    renderMotion();
-    renderActions();
-  }
+  function renderAll() { renderComponents(); renderMotion(); renderActions(); }
 
   /* ----------------------------------------------------------------- tabs */
 
   function showView(name) {
     state.view = name;
-    el.tabs.forEach(function (t) {
-      t.setAttribute('aria-selected', String(t.dataset.view === name));
-    });
-    Object.keys(el.views).forEach(function (k) {
-      el.views[k].hidden = (k !== name);
-    });
+    el.tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.view === name)); });
+    Object.keys(el.views).forEach(function (k) { el.views[k].hidden = (k !== name); });
   }
-
-  el.tabs.forEach(function (t) {
-    t.addEventListener('click', function () { showView(t.dataset.view); });
-  });
+  el.tabs.forEach(function (t) { t.addEventListener('click', function () { showView(t.dataset.view); }); });
 
   /* --------------------------------------------------------------- search */
 
@@ -206,23 +221,17 @@
     state.query = el.search.value.trim().toLowerCase();
     el.searchWrap.classList.toggle('has-value', !!el.search.value);
     renderAll();
-
-    // Jump to whichever tab actually has hits, so one box searches everything.
     if (state.query) {
       if (filteredComponents().length) showView('components');
       else if (filteredMotion().length) showView('motion');
       else if (filteredActions().length) showView('actions');
     }
   });
-
   el.searchClear.addEventListener('click', function () {
-    el.search.value = '';
-    state.query = '';
+    el.search.value = ''; state.query = '';
     el.searchWrap.classList.remove('has-value');
-    renderAll();
-    el.search.focus();
+    renderAll(); el.search.focus();
   });
-
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); el.search.select(); }
     if (e.key === 'Escape') {
@@ -238,87 +247,175 @@
     if (!c) return;
     state.component = c;
     state.params = L.defaults(c);
+    applyVariant(state.params.variant, true);          // seed variant defaults
+    state.anim = M.defaults(c.defaultAnim || 'appleEase');
     el.sheetTitle.textContent = c.name;
-    el.sheetSub.textContent = c.category + ' · builds a live precomp';
-    buildFields();
+    el.sheetSub.textContent = labelFor(c.category) + ' · builds a live precomp';
+    buildSections();
     updateHero();
     el.sheet.classList.add('open');
     el.sheet.setAttribute('aria-hidden', 'false');
+    setTimeout(playHero, 120);                          // greet with the animation
   }
-
   function closeSheet() {
+    A.stop();
     el.sheet.classList.remove('open');
     el.sheet.setAttribute('aria-hidden', 'true');
   }
 
+  function applyVariant(variantId, silent) {
+    if (!state.component.variants) return;
+    state.params.variant = variantId;
+    var set = L.variantSet(state.component, variantId);
+    for (var k in set) if (set.hasOwnProperty(k)) state.params[k] = set[k];
+    if (!silent) { buildSections(); updateHero(); playHero(); }
+  }
+
   function visible(param) {
+    if (param.group === 'hidden') return false;
     return !param.showIf || !!state.params[param.showIf];
   }
 
-  function buildFields() {
+  /* --- section + control building --------------------------------------- */
+
+  function buildSections() {
     var c = state.component;
-    el.sheetFields.innerHTML = '';
+    el.sheetSections.innerHTML = '';
 
-    c.params.forEach(function (p) {
-      var field = document.createElement('div');
-      field.className = 'field';
-      field.dataset.key = p.key;
-
-      var label = document.createElement('label');
-      label.textContent = p.label;
-      label.setAttribute('for', 'f_' + p.key);
-      field.appendChild(label);
-
-      var control = document.createElement('div');
-      control.className = 'control';
-      control.appendChild(buildControl(p));
-      field.appendChild(control);
-
-      el.sheetFields.appendChild(field);
-    });
-
+    if (c.variants) el.sheetSections.appendChild(variantSection(c));
+    el.sheetSections.appendChild(groupSection('Content', paramsOf(c, 'content')));
+    el.sheetSections.appendChild(groupSection('Style', paramsOf(c, 'style')));
+    el.sheetSections.appendChild(animationSection());
+    el.sheetSections.appendChild(settingsSection());
     refreshVisibility();
   }
 
-  function buildControl(p) {
+  function paramsOf(c, group) {
+    return c.params.filter(function (p) { return (p.group || 'content') === group; });
+  }
+
+  function sectionEl(title) {
+    var s = document.createElement('div');
+    s.className = 'bsection';
+    var h = document.createElement('div');
+    h.className = 'bsection-title';
+    h.textContent = title;
+    s.appendChild(h);
+    return s;
+  }
+
+  function variantSection(c) {
+    var s = sectionEl('Variant');
+    var wrap = document.createElement('div');
+    wrap.className = 'chips';
+    c.variants.forEach(function (v) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (state.params.variant === v.id ? ' on' : '');
+      b.textContent = v.name;
+      b.addEventListener('click', function () {
+        applyVariant(v.id);
+      });
+      wrap.appendChild(b);
+    });
+    s.appendChild(wrap);
+    return s;
+  }
+
+  function groupSection(title, params) {
+    var s = sectionEl(title);
+    if (!params.length) { s.style.display = 'none'; return s; }
+    params.forEach(function (p) { s.appendChild(fieldFor(p, state.params, onParamChange)); });
+    return s;
+  }
+
+  function animationSection() {
+    var s = sectionEl('Animation');
+
+    // preset chips
+    var chips = document.createElement('div');
+    chips.className = 'chips';
+    M.presets.forEach(function (pr) {
+      var b = document.createElement('button');
+      b.className = 'chip anim' + (state.anim.preset === pr.id ? ' on' : '');
+      b.innerHTML = '<span class="chip-curve">' + curveArt(pr) + '</span>' + pr.name;
+      b.addEventListener('click', function () {
+        state.anim = M.defaults(pr.id);
+        buildSections(); updateHero(); playHero();
+      });
+      chips.appendChild(b);
+    });
+    s.appendChild(chips);
+
+    var preset = M.byId(state.anim.preset);
+    M.params.forEach(function (d) {
+      if (d.spring && !preset.spring) return;          // hide spring-only controls
+      s.appendChild(fieldFor(d, state.anim, function () { updateHero(); }));
+    });
+    return s;
+  }
+
+  function settingsSection() {
+    var s = sectionEl('Default font');
+    var d = { key: 'font', label: 'Font', type: 'select', options: TK.fonts.map(function (f) { return { value: f.id, label: f.name }; }) };
+    var target = settings;
+    s.appendChild(fieldFor(d, target, function () { saveSettings(); }));
+    var note = document.createElement('p');
+    note.className = 'bnote';
+    note.textContent = 'Saved as your default for every component you create.';
+    s.appendChild(note);
+    return s;
+  }
+
+  /** Build one labelled field bound to `target[key]`, calling onChange after. */
+  function fieldFor(p, target, onChange) {
+    var field = document.createElement('div');
+    field.className = 'field';
+    field.dataset.key = p.key;
+
+    var label = document.createElement('label');
+    label.textContent = p.label + (p.unit ? ' (' + p.unit + ')' : '');
+    label.setAttribute('for', 'f_' + p.key);
+    field.appendChild(label);
+
+    var control = document.createElement('div');
+    control.className = 'control';
+    control.appendChild(makeControl(p, target, onChange));
+    field.appendChild(control);
+    return field;
+  }
+
+  function makeControl(p, target, onChange) {
     var frag = document.createDocumentFragment();
+    var fire = onChange || function () {};
 
     if (p.type === 'number') {
       var range = document.createElement('input');
       range.type = 'range';
       range.min = p.min; range.max = p.max; range.step = p.step || 1;
-      range.value = state.params[p.key];
-
+      range.value = target[p.key];
       var num = document.createElement('input');
       num.type = 'number';
       num.id = 'f_' + p.key;
       num.min = p.min; num.max = p.max; num.step = p.step || 1;
-      num.value = state.params[p.key];
-
+      num.value = target[p.key];
       function commit(v) {
-        v = Math.max(p.min, Math.min(p.max, Number(v) || 0));
-        state.params[p.key] = v;
-        range.value = v; num.value = v;
-        updateHero();
+        v = Math.max(p.min, Math.min(p.max, Number(v)));
+        if (isNaN(v)) v = p.min;
+        target[p.key] = v; range.value = v; num.value = v; fire(p.key);
       }
       range.addEventListener('input', function () { commit(range.value); });
       num.addEventListener('change', function () { commit(num.value); });
-
-      frag.appendChild(range);
-      frag.appendChild(num);
+      frag.appendChild(range); frag.appendChild(num);
 
     } else if (p.type === 'bool') {
       var sw = document.createElement('button');
-      sw.type = 'button';
-      sw.className = 'switch';
-      sw.id = 'f_' + p.key;
+      sw.type = 'button'; sw.className = 'switch'; sw.id = 'f_' + p.key;
       sw.setAttribute('role', 'switch');
-      sw.setAttribute('aria-checked', String(!!state.params[p.key]));
+      sw.setAttribute('aria-checked', String(!!target[p.key]));
       sw.addEventListener('click', function () {
-        state.params[p.key] = !state.params[p.key];
-        sw.setAttribute('aria-checked', String(state.params[p.key]));
-        refreshVisibility();
-        updateHero();
+        target[p.key] = !target[p.key];
+        sw.setAttribute('aria-checked', String(target[p.key]));
+        fire(p.key);
       });
       frag.appendChild(sw);
 
@@ -327,47 +424,47 @@
       sel.id = 'f_' + p.key;
       p.options.forEach(function (o) {
         var opt = document.createElement('option');
-        opt.value = o.value;
-        opt.textContent = o.label;
-        if (o.value === state.params[p.key]) opt.selected = true;
+        opt.value = o.value; opt.textContent = o.label;
+        if (o.value === target[p.key]) opt.selected = true;
         sel.appendChild(opt);
       });
-      sel.addEventListener('change', function () {
-        state.params[p.key] = sel.value;
-        // Picking a glass style pulls its blur value in with it.
-        if (p.key === 'glassPreset' && 'blur' in state.params) {
-          state.params.blur = L.glassById(sel.value).blur;
-          var blurField = el.sheetFields.querySelector('[data-key="blur"]');
-          if (blurField) {
-            blurField.querySelector('input[type=range]').value = state.params.blur;
-            blurField.querySelector('input[type=number]').value = state.params.blur;
-          }
-        }
-        updateHero();
-      });
+      sel.addEventListener('change', function () { target[p.key] = sel.value; fire(p.key); });
       frag.appendChild(sel);
 
     } else {
       var txt = document.createElement('input');
-      txt.type = 'text';
-      txt.id = 'f_' + p.key;
-      txt.value = state.params[p.key];
-      txt.addEventListener('input', function () {
-        state.params[p.key] = txt.value;
-        updateHero();
-      });
+      txt.type = 'text'; txt.id = 'f_' + p.key; txt.value = target[p.key];
+      txt.addEventListener('input', function () { target[p.key] = txt.value; fire(p.key); });
       frag.appendChild(txt);
     }
-
     return frag;
   }
 
+  function onParamChange(key) {
+    // Picking a glass material pulls its blur value in with it.
+    if (key === 'glassPreset' && 'blur' in state.params) {
+      state.params.blur = L.glassById(state.params.glassPreset).blur;
+      var f = el.sheetSections.querySelector('[data-key="blur"]');
+      if (f) {
+        var r = f.querySelector('input[type=range]'), n = f.querySelector('input[type=number]');
+        if (r) r.value = state.params.blur; if (n) n.value = state.params.blur;
+      }
+    }
+    // A variant chip changes many params, but toggling glass etc. can leave the
+    // chosen variant stale — that's fine, the variant chips reflect last pick.
+    refreshVisibility();
+    updateHero();
+  }
+
   function refreshVisibility() {
+    if (!state.component) return;
     state.component.params.forEach(function (p) {
-      var node = el.sheetFields.querySelector('[data-key="' + p.key + '"]');
+      var node = el.sheetSections.querySelector('.field[data-key="' + p.key + '"]');
       if (node) node.hidden = !visible(p);
     });
   }
+
+  /* --- hero preview ------------------------------------------------------ */
 
   var heroRaf = null;
   function updateHero() {
@@ -376,13 +473,20 @@
       el.sheetHero.innerHTML = P.render(state.component.id, state.params, 420, 236);
     });
   }
+  function playHero() {
+    if (reduceMotion || !A.supported) return;
+    // Ensure the SVG exists before playing.
+    if (!el.sheetHero.querySelector('svg')) updateHero();
+    requestAnimationFrame(function () { A.play(el.sheetHero, state.component.id, state.anim); });
+  }
+  el.sheetPlay.addEventListener('click', function () { updateHero(); requestAnimationFrame(playHero); });
 
   el.sheetBack.addEventListener('click', closeSheet);
-
   el.sheetReset.addEventListener('click', function () {
     state.params = L.defaults(state.component);
-    buildFields();
-    updateHero();
+    applyVariant(state.params.variant, true);
+    state.anim = M.defaults(state.component.defaultAnim || 'appleEase');
+    buildSections(); updateHero(); playHero();
     setStatus('Settings reset to defaults');
   });
 
@@ -392,26 +496,23 @@
     var c = state.component;
     var params = JSON.parse(JSON.stringify(state.params));
     params.__type = c.id;
+    params.__font = settings.font;
+    params.anim = JSON.parse(JSON.stringify(state.anim));
 
     el.sheetCreate.disabled = true;
     setStatus('Creating ' + c.name.toLowerCase() + '…', 'busy');
-
     window.CEP.call('create', params)
-      .then(function (payload) {
-        setStatus(payload || (c.name + ' created'), 'ok');
-        closeSheet();
-      })
-      .catch(function (err) {
-        setStatus(err.message || 'Could not create the component', 'err');
-      })
-      .then(function () {
-        el.sheetCreate.disabled = false;
-      });
+      .then(function (payload) { setStatus(payload || (c.name + ' created'), 'ok'); closeSheet(); })
+      .catch(function (err) { setStatus(err.message || 'Could not create the component', 'err'); })
+      .then(function () { el.sheetCreate.disabled = false; });
   });
 
-  /* --------------------------------------------------- delegated tile clicks */
+  /* --------------------------------------------------- delegated clicks */
 
-  document.getElementById('body').addEventListener('click', function (e) {
+  el.body.addEventListener('click', function (e) {
+    var cat = e.target.closest('[data-cat]');
+    if (cat) { state.category = cat.dataset.cat; renderComponents(); return; }
+
     var tile = e.target.closest('[data-component]');
     if (tile) { openSheet(tile.dataset.component); return; }
 
@@ -419,12 +520,11 @@
     if (motion) {
       var preset = motion.dataset.motion;
       setStatus('Applying ' + preset + '…', 'busy');
-      window.CEP.call('motion', { preset: preset })
+      window.CEP.call('motion', M.defaults(preset))
         .then(function (payload) { setStatus(payload || 'Motion applied', 'ok'); })
         .catch(function (err) { setStatus(err.message, 'err'); });
       return;
     }
-
     var action = e.target.closest('[data-action]');
     if (action) {
       var id = action.dataset.action;
@@ -435,6 +535,23 @@
     }
   });
 
+  // Hover-to-play on component tiles (§24). mouseover bubbles, so we dedupe by
+  // tracking which tile is under the pointer and only replay on a new one.
+  var lastTile = null;
+  el.views.components.addEventListener('mouseover', function (e) {
+    if (reduceMotion || !A.supported) return;
+    var tile = e.target.closest ? e.target.closest('.tile') : null;
+    if (!tile || tile === lastTile) return;
+    lastTile = tile;
+    var c = L.componentById(tile.dataset.component);
+    if (!c) return;
+    A.play(tile.querySelector('.tile-art'), c.id, M.defaults(c.defaultAnim || 'appleEase'));
+  });
+  el.views.components.addEventListener('mouseout', function (e) {
+    var to = e.relatedTarget;
+    if (!to || !to.closest || !to.closest('.tile')) lastTile = null;
+  });
+
   /* ------------------------------------------------------------------ boot */
 
   function boot() {
@@ -443,14 +560,10 @@
     renderAll();
     showView('components');
 
-    if (window.CEP.isMock) {
-      setStatus('Preview mode — no After Effects host detected');
-      return;
-    }
+    if (window.CEP.isMock) { setStatus('Preview mode — no After Effects host detected'); return; }
     window.CEP.call('ping', {})
       .then(function (payload) { setStatus(payload || 'Connected', 'ok'); })
       .catch(function (err) { setStatus(err.message, 'err'); });
   }
-
   boot();
 })();

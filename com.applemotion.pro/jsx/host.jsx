@@ -15,7 +15,11 @@
 #include "components/card.jsx"
 #include "components/notification.jsx"
 #include "components/toggle.jsx"
+#include "components/button.jsx"
+#include "components/chart.jsx"
+#include "components/progress.jsx"
+#include "components/badge.jsx"
 
 #include "api.jsx"
 
-AMUI.version = '0.1.0';
+AMUI.version = '0.2.0';

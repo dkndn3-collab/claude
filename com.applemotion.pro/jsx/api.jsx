@@ -21,6 +21,8 @@ $.global.AMUI = $.global.AMUI || {};
   }
 
   function create(p) {
+    // Honour the panel's default-font choice for every text layer in this build.
+    if (p.__font) AMUI.font = (AMUI.T.fonts[p.__font] || null);
     var type = p.__type;
     var generator = AMUI.Components[type];
     if (!generator) throw new Error('No generator for “' + type + '”.');
@@ -30,7 +32,7 @@ $.global.AMUI = $.global.AMUI || {};
   function dispatch(action, p) {
     switch (action) {
       case 'create': return create(p);
-      case 'motion': return AMUI.Motion.apply(p.preset);
+      case 'motion': return AMUI.Motion.apply(p.preset, p);
       case 'action': return AMUI.Actions.run(p.id);
       default: throw new Error('Unknown action: ' + action);
     }
