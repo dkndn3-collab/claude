@@ -1,32 +1,34 @@
 /**
- * engine.jsx — builds the gradient out of native After Effects parts.
+ * engine.jsx — builds the mesh gradient out of native After Effects parts.
  *
- * No footage, no imported file, no baked frame: a few solids, a stack of stock
+ * No footage, no imported file, no baked frame: solids, shape layers, stock
  * effects, and expressions that tie every parameter back to one controller.
- * The panel sends numbers; this file turns them into a layer stack you can keep
- * editing afterwards.
  *
- *   GF CONTROLLER    every parameter as a slider or colour control
- *   Grain            adjustment layer · Noise
- *   Warp             adjustment layer · Displacement Map + CC Vector Blur (flow)
- *                                       Turbulent Displace + Fast Box Blur
- *   Colour B         4-Color Gradient for stops 5–8, mixed through…
- *   Mix Matte        …a Fractal Noise luma matte
- *   Colour A         Gradient Ramp (2 stops, exact) or 4-Color Gradient
- *   FIELD            Fractal Noise, video off — the flow mode's vector source
+ *   GF CONTROLLER   Motion · Blend · Flow · Grain · Loop · Seed + the colours
+ *   Grain           adjustment layer · Noise (never below one LSB of dither)
+ *   Flow            adjustment layer · Turbulent Displace, low frequency
+ *   Colour n…1      one soft colour point each: ellipse + Fast Box Blur,
+ *                   position driven by a closed orbit expression
+ *   Base            solid · Fill, the first colour under everything
  *
- * Two constraints shaped this design and are worth knowing before changing it:
+ * Why this shape and not a noise-into-colour-ramp chain (§4.5):
  *
- * 1. After Effects has no scriptable multi-stop gradient. Colorama's output
- *    cycle and a shape layer's gradient stops cannot be written from
- *    ExtendScript, so the colour base is Gradient Ramp (exactly 2 stops) or
- *    4-Color Gradient (4 anchors) — which is why the panel resamples the user's
- *    2–8 stops perceptually before sending them here.
+ *   · noise only ever moves coordinates here — it never picks a colour, which
+ *     is what makes the other approach read as smoke with a filter on it
+ *   · colour is mixed 2D spatially between soft points, not through a 1D
+ *     luminance lookup, so there are no bands and no dead mid-tones
+ *   · mixing happens in linear light when the colour space asks for it, so
+ *     blue↔orange does not pass through mud
+ *   · the Noise effect keeps a dither floor even at Grain 0
  *
- * 2. Effect sub-property indices differ between AE versions. Every read goes
- *    through prop(), which tries the match name first and falls back to the
- *    index, and every write is guarded — a version that disagrees loses one
- *    parameter rather than the whole build.
+ * The panel's WebGL preview is the reference implementation. This reproduces
+ * it with the pieces After Effects actually has: Gaussian weighting becomes a
+ * blurred ellipse per colour, and the weighted average becomes an over
+ * composite. Same colour points, same orbits, same loop.
+ *
+ * Effect sub-property indices differ between AE versions, so every read goes
+ * through prop() — match name first, index as the fallback — and every write is
+ * guarded: a version that disagrees loses one parameter, not the whole build.
  */
 
 $.global.GF = $.global.GF || {};
@@ -53,9 +55,9 @@ GF.Gradient = (function () {
   function expr(p, s) { if (p) { try { p.expression = s; } catch (e) {} } }
 
   function addFx(layer, matchName, name) {
-    var parade = layer.property('ADBE Effect Parade');
     var e;
-    try { e = parade.addProperty(matchName); } catch (err) { return null; }
+    try { e = layer.property('ADBE Effect Parade').addProperty(matchName); }
+    catch (err) { return null; }
     if (name) { try { e.name = name; } catch (err2) {} }
     return e;
   }
@@ -73,11 +75,7 @@ GF.Gradient = (function () {
     return out;
   }
 
-  /**
-   * Colour and point controls found by value type rather than by index — the
-   * one lookup that has to survive every AE version, since it is how the
-   * colours get onto the gradient at all.
-   */
+  /** Found by value type rather than index — the lookup that has to survive. */
   function ofType(effect, types) {
     var all = leaves(effect), out = [];
     for (var i = 0; i < all.length; i++) {
@@ -91,7 +89,6 @@ GF.Gradient = (function () {
   }
 
   function colorProps(effect) { return ofType(effect, [PropertyValueType.COLOR]); }
-  function pointProps(effect) { return ofType(effect, [PropertyValueType.TwoD_SPATIAL, PropertyValueType.TwoD]); }
 
   function uniqueLayerName(comp, base) {
     var taken = {};
@@ -106,19 +103,6 @@ GF.Gradient = (function () {
     return comp.layers.addSolid([0, 0, 0], name, comp.width, comp.height, 1);
   }
 
-  function lumaMatte(layer, matteLayer) {
-    try {
-      if (typeof layer.setTrackMatte === 'function') {
-        layer.setTrackMatte(matteLayer, TrackMatteType.LUMA);
-        return;
-      }
-    } catch (e) {}
-    try {
-      layer.trackMatteType = TrackMatteType.LUMA;
-      matteLayer.enabled = false;
-    } catch (e2) {}
-  }
-
   /* ====================================================================== */
   /* Build                                                                  */
   /* ====================================================================== */
@@ -128,9 +112,14 @@ GF.Gradient = (function () {
     var wanted = (p.name && p.name.length) ? p.name : 'GRADIENT — ' + p.label;
     var comp = p.precomp ? U.makeComp(wanted, parent.width, parent.height, parent) : parent;
 
-    // Everything this build adds, so a flat build can be moved under the
-    // user's existing layers as one group.
+    var colors = p.colors || [];
+    if (colors.length < 2) throw new Error('A mesh gradient needs at least two colours.');
+
+    // Everything this build adds, so a flat build can be moved under the user's
+    // existing layers as one group.
     var made = [];
+
+    /* ---- controller ---------------------------------------------------- */
 
     var ctrlName = uniqueLayerName(comp, 'GF CONTROLLER');
     var ctrl = comp.layers.addNull();
@@ -140,20 +129,13 @@ GF.Gradient = (function () {
     ctrl.enabled = false;
     ctrl.property('Transform').property('Position').setValue([comp.width / 2, comp.height / 2]);
 
-    /* ---- the controller carries every parameter (§5.4) ----------------- */
-    U.slider(ctrl, 'Angle', p.angle);
-    U.slider(ctrl, 'Spread', p.spread);
-    U.slider(ctrl, 'Scale', p.scale);
-    U.slider(ctrl, 'Complexity', p.complexity);
-    U.slider(ctrl, 'Warp', p.warp);
-    U.slider(ctrl, 'Softness', p.softness);
+    U.slider(ctrl, 'Motion', p.motion);
+    U.slider(ctrl, 'Blend', p.blend);
+    U.slider(ctrl, 'Flow', p.flow);
     U.slider(ctrl, 'Grain', p.grain);
-    U.slider(ctrl, 'Speed', p.speed);
     U.slider(ctrl, 'Loop', p.loop);
     U.slider(ctrl, 'Seed', p.seed);
-
-    var stops = p.colors.concat(p.extra || []);
-    for (var s = 0; s < stops.length; s++) U.colorControl(ctrl, 'Color ' + (s + 1), stops[s]);
+    for (var c = 0; c < colors.length; c++) U.colorControl(ctrl, 'Color ' + (c + 1), colors[c]);
 
     var R = function (name) {
       return 'thisComp.layer("' + ctrlName + '").effect("' + name + '")(1)';
@@ -162,208 +144,131 @@ GF.Gradient = (function () {
       return 'c = ' + R('Color ' + index) + ';\n[c[0], c[1], c[2], 1].slice(0, value.length)';
     }
 
-    /* ---- shared expression fragments ----------------------------------- */
-
-    // Everything geometric derives from Angle and Spread, so dragging either
-    // one in the Effect Controls panel re-lays the whole gradient out.
-    var GEO = 'c = [thisComp.width/2, thisComp.height/2];\n' +
-              'a = degreesToRadians(' + R('Angle') + ');\n' +
-              'd = [Math.cos(a), Math.sin(a)];\n' +
-              'ext = Math.max(thisComp.width, thisComp.height) * ' + R('Spread') + '/100;\n';
-
-    var CYCLES = 'Math.max(1, Math.round(' + R('Speed') + '/12))';
-
     /**
-     * Seamless loop (§5.3): evolution covers a whole number of revolutions per
-     * loop, and Cycle Evolution is switched on with the same number — so the
-     * last frame of the loop is the first frame again, exactly.
+     * The Gaussian's width, in pixels, from the Blend slider — the same
+     * sigma the preview's `sharp = mix(26, 3.2, blend)` works out to.
      */
-    function evolution(phase) {
-      if (!p.speed) return String(phase);
-      return 'dur = Math.max(0.1, ' + R('Loop') + ');\n' +
-             'rev = ' + CYCLES + ';\n' +
-             phase + ' + (time/dur) * rev * 360';
+    var SIGMA = 'thisComp.height * (0.139 + 0.256 * ' + R('Blend') + '/100)';
+
+    /* ---- base — the first colour, under everything ---------------------- */
+
+    var base = solid(comp, 'Base');
+    made.push(base);
+    var baseFill = addFx(base, 'ADBE Fill', 'Base Colour');
+    if (baseFill) {
+      var bc = colorProps(baseFill)[0];
+      set(bc, U.rgba(colors[0]));
+      expr(bc, colorExpr(1));
     }
 
-    function setEvolutionOptions(effect, groupIndex, groupMatch, seedSalt) {
-      var g = prop(effect, groupIndex, groupMatch);
-      if (!g) return;
-      set(prop(g, 1), 1);                                   // Cycle Evolution on
-      expr(prop(g, 2), CYCLES);                             // Cycle (in Revolutions)
-      expr(prop(g, 3), 'Math.round(' + R('Seed') + ') + ' + seedSalt);
+    /* ---- one soft colour point per stop --------------------------------- */
+
+    for (var i = 0; i < colors.length; i++) {
+      var pt = p.points[i];
+      var layer = comp.layers.addShape();
+      made.push(layer);
+      layer.name = 'Colour ' + (i + 1);
+
+      var group = layer.property('ADBE Root Vectors Group').addProperty('ADBE Vector Group');
+      group.name = 'Point';
+      var vectors = group.property('ADBE Vectors Group');
+
+      var ell = vectors.addProperty('ADBE Vector Shape - Ellipse');
+      expr(ell.property('ADBE Vector Ellipse Size'), 's = ' + SIGMA + ' * 1.8;\n[s, s]');
+
+      var fill = vectors.addProperty('ADBE Vector Graphic - Fill');
+      var fc = fill.property('ADBE Vector Fill Color');
+      set(fc, U.rgba(colors[i]));
+      expr(fc, colorExpr(i + 1));
+
+      /**
+       * The orbit closes: the rate is a whole harmonic of the loop, so at the
+       * end of the cycle the point is exactly where it started. Motion scales
+       * the radius, not the rate — Motion 0 is a true still and turning it up
+       * can never break the loop (§4.5).
+       */
+      expr(layer.property('Transform').property('Position'),
+        'home = [' + pt.home[0].toFixed(5) + ', ' + pt.home[1].toFixed(5) + '];\n' +
+        'rad = ' + pt.rad.toFixed(5) + '; harm = ' + pt.harm + '; ang = ' + pt.ang.toFixed(5) + ';\n' +
+        'm = ' + R('Motion') + '/100;\n' +
+        'ph = time / Math.max(0.5, ' + R('Loop') + ') * Math.PI * 2 * harm;\n' +
+        '[(home[0] + rad * m * Math.cos(ph + ang)) * thisComp.width,\n' +
+        ' (home[1] + rad * m * Math.sin(ph + ang * 1.7)) * thisComp.height]');
+
+      // A blurred disc is the closest native thing to a Gaussian falloff.
+      U.fastBlur(layer, comp.height * 0.2, SIGMA + ' * 0.85');
     }
 
-    /* ---- 4-Color Gradient, anchored on the Angle/Spread axis ----------- */
+    /* ---- flow — one low-frequency warp over the whole field -------------- */
 
-    function quad(layer, colors, offsets, firstColorIndex) {
-      var fx = addFx(layer, 'ADBE 4ColorGradient', 'Colour Blend');
-      if (!fx) throw new Error('This After Effects install has no 4-Color Gradient effect.');
+    var flow = solid(comp, 'Flow');
+    made.push(flow);
+    flow.adjustmentLayer = true;
 
-      var pts = pointProps(fx), cols = colorProps(fx);
-      for (var i = 0; i < 4; i++) {
-        var t = (i / 3) - 0.5;
-        var o = (offsets && offsets[i]) || [0, 0];
-        if (pts[i]) {
-          expr(pts[i], GEO +
-            'o = [' + o[0].toFixed(4) + ', ' + o[1].toFixed(4) + '];\n' +
-            'c + d * (' + t.toFixed(4) + ' * ext) + o * ext');
-        }
-        if (cols[i]) expr(cols[i], colorExpr(firstColorIndex + Math.min(i, colors.length - 1)));
-      }
-      // Blend widens the falloff between anchors; Softness already reads as
-      // "how soft is this gradient", so it drives both.
-      var blend = prop(fx, 2);
-      if (blend && blend.propertyValueType === PropertyValueType.OneD) {
-        expr(blend, '100 + ' + R('Softness') + ' * 2');
-      }
-      return fx;
+    var td = addFx(flow, 'ADBE Turbulent Displace', 'Flow');
+    if (td) {
+      // Amplitude matches the preview's warp: up to 0.42 of the frame.
+      expr(prop(td, 2, 'ADBE Turbulent Displace-0002'),
+        R('Flow') + '/100 * 0.42 * thisComp.height');                       // Amount
+      // Deliberately large: a high-frequency warp is what turns a gradient
+      // into smoke, so Size stays big and Complexity stays at 1.
+      expr(prop(td, 3, 'ADBE Turbulent Displace-0003'),
+        'Math.max(120, thisComp.height * 0.32)');                            // Size
+      set(prop(td, 5, 'ADBE Turbulent Displace-0005'), 1);                   // Complexity
+      // The warp field itself is static; the sample point travels a closed
+      // circle through it, which is what makes the loop exact.
+      expr(prop(td, 6, 'ADBE Turbulent Displace-0006'),
+        '(' + R('Seed') + ' % 360)');                                        // Evolution
+      expr(prop(td, 4, 'ADBE Turbulent Displace-0004'),
+        'm = ' + R('Motion') + '/100;\n' +
+        't = time / Math.max(0.5, ' + R('Loop') + ') * Math.PI * 2;\n' +
+        'amp = m * thisComp.width * 0.12;\n' +
+        '[thisComp.width/2, thisComp.height/2] + [Math.cos(t), Math.sin(t)] * amp');
+      var evoOpts = prop(td, 7, 'ADBE Turbulent Displace-0007');
+      if (evoOpts) expr(prop(evoOpts, 3), 'Math.round(' + R('Seed') + ')');  // Random Seed
     }
 
-    /* ---- FIELD — the flow mode's vector source ------------------------- */
+    /* ---- grain — texture, and the dither that kills banding ------------- */
 
-    var field = null;
-    if (p.mode === 'flow') {
-      field = solid(comp, 'FIELD');
-      made.push(field);
-      var fn = addFx(field, 'ADBE Fractal Noise', 'Field Noise');
-      if (fn) {
-        set(prop(fn, 4, 'ADBE Fractal Noise-0004'), 120);    // Contrast
-        set(prop(fn, 5, 'ADBE Fractal Noise-0005'), -10);    // Brightness
-        var xf = prop(fn, 7, 'ADBE Fractal Noise-0007');     // Transform group
-        if (xf) expr(prop(xf, 3), '40 + ' + R('Scale') + ' * 2.6');   // Scale
-        expr(prop(fn, 8, 'ADBE Fractal Noise-0008'),
-          'Math.max(1, Math.round(' + R('Complexity') + '/22))');     // Complexity
-        expr(prop(fn, 10, 'ADBE Fractal Noise-0010'), evolution(p.phase));
-        setEvolutionOptions(fn, 11, 'ADBE Fractal Noise-0011', 0);
-      }
-      field.enabled = false;         // eye off — it is a map source, not an image
-      field.label = 8;
-    }
-
-    /* ---- Colour A — the base ------------------------------------------- */
-
-    var colorA = solid(comp, 'Colour Base');
-    made.push(colorA);
-
-    if (p.exact) {
-      // Two stops in Linear mode: Gradient Ramp is mathematically exact and
-      // costs almost nothing to render.
-      var ramp = addFx(colorA, 'ADBE Ramp', 'Ramp');
-      if (ramp) {
-        var rPts = pointProps(ramp), rCols = colorProps(ramp);
-        var half = (p.shape === 'radial') ? 'c' : 'c - d * (ext/2)';
-        if (rPts[0]) expr(rPts[0], GEO + half);
-        if (rPts[1]) expr(rPts[1], GEO + 'c + d * (ext/2)');
-        if (rCols[0]) expr(rCols[0], colorExpr(1));
-        if (rCols[1]) expr(rCols[1], colorExpr(2));
-        set(prop(ramp, 5, 'ADBE Ramp-0005'), p.shape === 'radial' ? 2 : 1);  // Ramp Shape
-        set(prop(ramp, 6, 'ADBE Ramp-0006'), 2);                             // Ramp Scatter
-      }
-    } else {
-      quad(colorA, p.colors, p.offsets, 1);
-    }
-
-    /* ---- Colour B — stops 5–8, mixed in through a noise matte ---------- */
-
-    if (p.extra) {
-      var colorB = solid(comp, 'Colour Mix');
-      made.push(colorB);
-      quad(colorB, p.extra, p.extraOffsets, 5);
-
-      var matte = comp.layers.addSolid([1, 1, 1], 'Mix Matte', comp.width, comp.height, 1);
-      made.push(matte);
-      var mn = addFx(matte, 'ADBE Fractal Noise', 'Mix Noise');
-      if (mn) {
-        set(prop(mn, 4, 'ADBE Fractal Noise-0004'), 60);
-        var mxf = prop(mn, 7, 'ADBE Fractal Noise-0007');
-        if (mxf) expr(prop(mxf, 3), '80 + ' + R('Scale') + ' * 3.2');
-        expr(prop(mn, 8, 'ADBE Fractal Noise-0008'),
-          'Math.max(1, Math.round(' + R('Complexity') + '/30))');
-        expr(prop(mn, 10, 'ADBE Fractal Noise-0010'), evolution((p.phase + 140) % 360));
-        setEvolutionOptions(mn, 11, 'ADBE Fractal Noise-0011', 4001);
-      }
-      lumaMatte(colorB, matte);
-    }
-
-    /* ---- Warp — one adjustment layer over the colour ------------------- */
-
-    var warp = solid(comp, 'Warp');
-    made.push(warp);
-    warp.adjustmentLayer = true;
-
-    // Layer-index properties are bound once the stack is final — adding a layer
-    // above FIELD would otherwise point them at the wrong layer.
-    var fieldRefs = [];
-
-    if (p.mode === 'flow' && field) {
-      var dm = addFx(warp, 'ADBE Displacement Map', 'Flow Displace');
-      if (dm) {
-        fieldRefs.push(prop(dm, 1, 'ADBE Displacement Map-0001'));
-        expr(prop(dm, 3, 'ADBE Displacement Map-0003'), R('Warp') + ' * 1.6');  // Max Horizontal
-        expr(prop(dm, 5, 'ADBE Displacement Map-0005'), R('Warp') + ' * 1.6');  // Max Vertical
-      }
-      // Smears the colour along the field's own gradient — the fluid read.
-      var vb = addFx(warp, 'CC Vector Blur', 'Flow Smear');
-      if (vb) {
-        expr(prop(vb, 2), R('Warp') + ' * 0.28');   // Amount
-        fieldRefs.push(prop(vb, 5));                // Vector Map
-      }
-    }
-
-    if (p.mode !== 'linear' || p.warp > 0) {
-      var td = addFx(warp, 'ADBE Turbulent Displace', 'Turbulence');
-      if (td) {
-        expr(prop(td, 2, 'ADBE Turbulent Displace-0002'), R('Warp') + ' * 2.4');       // Amount
-        expr(prop(td, 3, 'ADBE Turbulent Displace-0003'), '20 + ' + R('Scale') + ' * 1.6'); // Size
-        expr(prop(td, 5, 'ADBE Turbulent Displace-0005'),
-          'Math.max(1, Math.round(' + R('Complexity') + '/22))');                      // Complexity
-        expr(prop(td, 6, 'ADBE Turbulent Displace-0006'), evolution((p.phase + 60) % 360));
-        setEvolutionOptions(td, 7, 'ADBE Turbulent Displace-0007', 17);
-        if (p.speed) {
-          // A circular drift loops as cleanly as the evolution does.
-          expr(prop(td, 4, 'ADBE Turbulent Displace-0004'),
-            'c = [thisComp.width/2, thisComp.height/2];\n' +
-            'dur = Math.max(0.1, ' + R('Loop') + ');\n' +
-            'amp = ' + R('Warp') + ' * 1.2;\n' +
-            't = time/dur * Math.PI * 2;\n' +
-            'c + [Math.sin(t), Math.cos(t)] * amp');
-        }
-      }
-    }
-
-    U.fastBlur(warp, p.softness * 0.55, R('Softness') + ' * 0.55');
-
-    /* ---- Grain — kills the banding a smooth ramp shows on 8-bit -------- */
-
-    if (p.grain > 0) {
-      var grain = solid(comp, 'Grain');
-      made.push(grain);
-      grain.adjustmentLayer = true;
-      var noise = addFx(grain, 'ADBE Noise', 'Grain');
-      if (noise) {
-        expr(prop(noise, 1, 'ADBE Noise-0001'), R('Grain'));   // Amount of Noise
-        set(prop(noise, 2, 'ADBE Noise-0002'), 0);             // Use Color Noise
-        set(prop(noise, 3, 'ADBE Noise-0003'), 1);             // Clip Result Values
-      }
+    var grain = solid(comp, 'Grain');
+    made.push(grain);
+    grain.adjustmentLayer = true;
+    var noise = addFx(grain, 'ADBE Noise', 'Grain');
+    if (noise) {
+      // 0.35% is one 8-bit LSB. Even at Grain 0 the dither stays in, because a
+      // smooth gradient without it WILL band on an 8-bit output (§4.5).
+      expr(prop(noise, 1, 'ADBE Noise-0001'), '0.35 + ' + R('Grain') + ' * 0.055');
+      set(prop(noise, 2, 'ADBE Noise-0002'), 0);        // Use Color Noise
+      set(prop(noise, 3, 'ADBE Noise-0003'), 1);        // Clip Result Values
     }
 
     /* ---- assemble ------------------------------------------------------ */
 
     ctrl.moveToBeginning();
 
-    for (var f = 0; f < fieldRefs.length; f++) set(fieldRefs[f], field.index);
+    // OKLab and HCL both ask for mixing in linear light; this is as close as a
+    // native composite gets to it.
+    var blending = '';
+    if (p.linear) {
+      try {
+        if (!app.project.linearBlending) {
+          app.project.linearBlending = true;
+          blending = ' · linear blending on';
+        }
+      } catch (e) { /* older AE without the project flag */ }
+    }
 
     var count = made.length + ' native layers, 0 assets';
 
     if (p.precomp) {
-      var layer = parent.layers.add(comp);
-      layer.name = comp.name;
-      layer.property('ADBE Transform Group').property('ADBE Position')
+      var placed = parent.layers.add(comp);
+      placed.name = comp.name;
+      placed.property('ADBE Transform Group').property('ADBE Position')
         .setValue([parent.width / 2, parent.height / 2]);
       // A gradient is a background: it goes under whatever is already there.
-      try { layer.moveToEnd(); } catch (e) {}
-      layer.selected = true;
-      return comp.name + ' added · ' + count;
+      try { placed.moveToEnd(); } catch (e) {}
+      placed.selected = true;
+      return comp.name + ' added · ' + count + blending;
     }
 
     // Built straight into the comp — keep the stack together at the bottom,
@@ -372,8 +277,7 @@ GF.Gradient = (function () {
     for (var m = 0; m < made.length; m++) { try { made[m].moveToEnd(); } catch (e) {} }
 
     ctrl.selected = true;
-    return p.label + ' built into ' + comp.name + ' · ' + count;
-
+    return p.label + ' built into ' + comp.name + ' · ' + count + blending;
   }
 
   /* ====================================================================== */

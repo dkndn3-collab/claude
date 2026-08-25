@@ -1,222 +1,315 @@
 /**
  * gradient-preview.js — the panel-side renderer.
  *
- * Draws the same gradient After Effects will build, in a <canvas>, from the
- * same parameters and the same seed. Nothing here is loaded from disk: the
- * pixels are computed per frame from value noise and the resolved colour set,
- * which is the whole point of the feature (§1).
+ * The mesh engine as a fragment shader: Gaussian-weighted colour points blended
+ * in OKLab, a low-frequency domain warp, and dither on the way out (§4.5). It
+ * is the reference implementation — jsx/engine.jsx reproduces it with native
+ * After Effects layers, from the same numbers.
  *
- * It mirrors the AE chain stage for stage:
+ * Nothing here is loaded from disk. Every pixel is computed per frame.
  *
- *   AE                                   here
- *   ──────────────────────────────────   ──────────────────────────────────
- *   Gradient Ramp / 4-Color Gradient   → exact ramp / inverse-square blend
- *   Turbulent Displace                 → fbm domain warp
- *   Displacement Map from FIELD (flow) → second-order warp
- *   Fast Box Blur (Softness)           → render scale + smoothed upscale
- *   Noise (Grain)                      → per-pixel jitter
- *
- * The loop is seamless the same way AE's is: evolution walks a circle in noise
- * space, so t = 0 and t = loop land on the same sample.
+ * One WebGL context does all the work and blits into each target canvas, so a
+ * grid of preset tiles plus a live hero costs one context, not seven.
  */
 (function (global) {
   'use strict';
 
   var G = global.GRADIENTS;
+  var MAX = G.maxColors;
 
-  /* ---------------------------------------------------------------- noise */
+  /* ====================================================================== */
+  /* Shaders                                                                */
+  /* ====================================================================== */
 
-  function hash(x, y, seed) {
-    var h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 1274126177);
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  }
+  var VERT = [
+    'attribute vec2 aPos;',
+    'void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }'
+  ].join('\n');
 
-  function vnoise(x, y, seed) {
-    var xi = Math.floor(x), yi = Math.floor(y);
-    var xf = x - xi, yf = y - yi;
-    var u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-    var a = hash(xi, yi, seed), b = hash(xi + 1, yi, seed);
-    var c = hash(xi, yi + 1, seed), d = hash(xi + 1, yi + 1, seed);
-    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
-  }
+  var FRAG = [
+    'precision highp float;',
+    '',
+    'uniform vec2  uRes;',
+    'uniform float uPhase;      // 0..TAU, one full loop',
+    'uniform float uTime;       // seconds, dither only',
+    'uniform vec3  uCol[' + MAX + '];',
+    'uniform vec2  uHome[' + MAX + '];',
+    'uniform vec3  uOrb[' + MAX + '];   // radius, harmonic, angle',
+    'uniform float uCount;',
+    'uniform float uMotion;     // 0..1',
+    'uniform float uBlend;      // 0..1  defined <-> soft',
+    'uniform float uFlow;       // 0..1  domain warp',
+    'uniform float uGrain;      // 0..1',
+    'uniform float uSeed;',
+    'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
+    '',
+    'const float TAU = 6.28318530718;',
+    '',
+    '/* ---------- transfer functions ---------- */',
+    'vec3 toLinear(vec3 c){',
+    '  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));',
+    '}',
+    'vec3 toSRGB(vec3 c){',
+    '  c = max(c, 0.0);',
+    '  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));',
+    '}',
+    '',
+    '/* ---------- OKLab (Björn Ottosson) ---------- */',
+    'vec3 lrgb2oklab(vec3 c){',
+    '  float l = 0.4122214708*c.r + 0.5363325363*c.g + 0.0514459929*c.b;',
+    '  float m = 0.2119034982*c.r + 0.6806995451*c.g + 0.1073969566*c.b;',
+    '  float s = 0.0883024619*c.r + 0.2817188376*c.g + 0.6299787005*c.b;',
+    '  return vec3(',
+    '    0.2104542553*pow(max(l,0.0),1.0/3.0) + 0.7936177850*pow(max(m,0.0),1.0/3.0) - 0.0040720468*pow(max(s,0.0),1.0/3.0),',
+    '    1.9779984951*pow(max(l,0.0),1.0/3.0) - 2.4285922050*pow(max(m,0.0),1.0/3.0) + 0.4505937099*pow(max(s,0.0),1.0/3.0),',
+    '    0.0259040371*pow(max(l,0.0),1.0/3.0) + 0.7827717662*pow(max(m,0.0),1.0/3.0) - 0.8086757660*pow(max(s,0.0),1.0/3.0));',
+    '}',
+    'vec3 oklab2lrgb(vec3 c){',
+    '  float l_ = c.x + 0.3963377774*c.y + 0.2158037573*c.z;',
+    '  float m_ = c.x - 0.1055613458*c.y - 0.0638541728*c.z;',
+    '  float s_ = c.x - 0.0894841775*c.y - 1.2914855480*c.z;',
+    '  float l = l_*l_*l_, m = m_*m_*m_, s = s_*s_*s_;',
+    '  return vec3(',
+    '     4.0767416621*l - 3.3077115913*m + 0.2309699292*s,',
+    '    -1.2684380046*l + 2.6097574011*m - 0.3413193965*s,',
+    '    -0.0041960863*l - 0.7034186147*m + 1.7076147010*s);',
+    '}',
+    '',
+    '/* ---------- noise — warp only, never colour (§4.5) ---------- */',
+    'float hash21(vec2 p){',
+    '  p = fract(p * vec2(123.34, 456.21));',
+    '  p += dot(p, p + 45.32);',
+    '  return fract(p.x * p.y);',
+    '}',
+    'float vnoise(vec2 p){',
+    '  vec2 i = floor(p), f = fract(p);',
+    '  vec2 u = f * f * (3.0 - 2.0 * f);',
+    '  float a = hash21(i);',
+    '  float b = hash21(i + vec2(1.0, 0.0));',
+    '  float c = hash21(i + vec2(0.0, 1.0));',
+    '  float d = hash21(i + vec2(1.0, 1.0));',
+    '  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);',
+    '}',
+    '',
+    'void main(){',
+    '  vec2 uv = gl_FragCoord.xy / uRes;',
+    '  float aspect = uRes.x / uRes.y;',
+    '',
+    '  /* Domain warp. The sample offset travels a CLOSED CIRCLE in noise space,',
+    '     so the field is exactly back where it started at phase = TAU — a real',
+    '     loop, no cross-fade. The frequency is deliberately low: high-frequency',
+    '     warp is what makes a gradient read as smoke. */',
+    '  vec2 orbit = vec2(cos(uPhase), sin(uPhase)) * uMotion;',
+    '  float F = 1.15;',
+    '  float n1 = vnoise(uv * F + orbit * 0.42 + uSeed);',
+    '  float n2 = vnoise(uv * F + orbit.yx * vec2(-0.42, 0.42) + uSeed + 19.7);',
+    '  vec2 q  = vec2(n1, n2) - 0.5;',
+    '  float n3 = vnoise(uv * 0.72 + q * 0.9 + orbit * 0.3 + uSeed + 4.1);',
+    '  float n4 = vnoise(uv * 0.72 + q * 0.9 - orbit * 0.3 + uSeed + 31.3);',
+    '  vec2 p = uv + (vec2(n3, n4) - 0.5) * (uFlow * 0.85);',
+    '',
+    '  /* Gaussian-weighted blend of the colour points. C-infinity smooth, so',
+    '     there is no seam and no banding structure to begin with. */',
+    '  float sharp = mix(26.0, 3.2, uBlend);',
+    '  vec3 acc = vec3(0.0);',
+    '  float wsum = 0.0;',
+    '  float chroma = 0.0;',
+    '',
+    '  for(int i = 0; i < ' + MAX + '; i++){',
+    '    float fi = float(i);',
+    '    float active = step(fi, uCount - 0.5);',
+    '',
+    '    float ph = uPhase * uOrb[i].y;',
+    '    vec2 pos = uHome[i] + uOrb[i].x * uMotion *',
+    '               vec2(cos(ph + uOrb[i].z), sin(ph + uOrb[i].z * 1.7));',
+    '',
+    '    vec2 d = (p - pos) * vec2(aspect, 1.0);',
+    '    float q = dot(d, d) * sharp;',
+    '    /* Gaussian core, plus an inverse-quadratic tail. A bare Gaussian',
+    '       underflows far from every point, and where that happens the blend',
+    '       snaps between whichever floor wins — a visible crease. The tail',
+    '       never reaches zero, so distant areas fade into each other. */',
+    '    float wt = (exp(-q) + 0.32 / (1.0 + q * q * 4.0)) * active;',
+    '',
+    '    vec3 lab = lrgb2oklab(toLinear(uCol[i]));',
+    '    if(uSpace > 1.5) lab = toLinear(uCol[i]);      // linear sRGB blend',
+    '    acc    += lab * wt;',
+    '    chroma += length(lrgb2oklab(toLinear(uCol[i])).yz) * wt;',
+    '    wsum   += wt;',
+    '  }',
+    '',
+    '  vec3 mixed = acc / max(wsum, 1e-5);',
+    '  vec3 lin;',
+    '  if(uSpace > 1.5){',
+    '    lin = mixed;                                   // already linear light',
+    '  } else if(uSpace > 0.5){',
+    '    /* HCL: keep the weighted mean chroma instead of letting opposing hues',
+    '       cancel each other out, which is what dulls an OKLab mean. */',
+    '    float c = length(mixed.yz);',
+    '    float target = chroma / max(wsum, 1e-5);',
+    '    lin = oklab2lrgb(vec3(mixed.x, mixed.yz * (target / max(c, 1e-4))));',
+    '  } else {',
+    '    lin = oklab2lrgb(mixed);',
+    '  }',
+    '',
+    '  vec3 col = toSRGB(lin);',
+    '',
+    '  /* Grain doubles as dither. Even at Grain = 0 a sub-LSB amount stays in,',
+    '     because 8-bit output without dither WILL band on a smooth gradient. */',
+    '  float g = hash21(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5;',
+    '  col += g * (0.9/255.0 + uGrain * 0.055);',
+    '',
+    '  gl_FragColor = vec4(col, 1.0);',
+    '}'
+  ].join('\n');
 
-  function fbm(x, y, octaves, seed) {
-    var sum = 0, norm = 0, amp = 0.5, f = 1;
-    for (var i = 0; i < octaves; i++) {
-      sum += amp * vnoise(x * f, y * f, seed + i * 1013);
-      norm += amp;
-      f *= 2;
-      amp *= 0.5;
+  /* ====================================================================== */
+  /* One shared context                                                     */
+  /* ====================================================================== */
+
+  var gl = null, prog = null, U = null, surface = null, failed = false;
+  var buf = {
+    col:  new Float32Array(MAX * 3),
+    home: new Float32Array(MAX * 2),
+    orb:  new Float32Array(MAX * 3)
+  };
+
+  function init() {
+    if (gl || failed) return !!gl;
+    surface = document.createElement('canvas');
+    surface.width = 480; surface.height = 270;
+    try {
+      gl = surface.getContext('webgl', { antialias: false, alpha: false, preserveDrawingBuffer: true })
+        || surface.getContext('experimental-webgl', { antialias: false, alpha: false, preserveDrawingBuffer: true });
+    } catch (e) { gl = null; }
+    if (!gl) { failed = true; return false; }
+
+    function shader(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        if (global.console) console.error(gl.getShaderInfoLog(s));
+        return null;
+      }
+      return s;
     }
-    return sum / norm;
+    var vs = shader(gl.VERTEX_SHADER, VERT), fs = shader(gl.FRAGMENT_SHADER, FRAG);
+    if (!vs || !fs) { gl = null; failed = true; return false; }
+
+    prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      if (global.console) console.error(gl.getProgramInfoLog(prog));
+      gl = null; failed = true; return false;
+    }
+    gl.useProgram(prog);
+
+    var vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    U = {};
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSeed', 'uSpace']
+      .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+    U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
+    U.uHome = gl.getUniformLocation(prog, 'uHome[0]');
+    U.uOrb  = gl.getUniformLocation(prog, 'uOrb[0]');
+    return true;
   }
 
-  /* -------------------------------------------------------------- geometry */
+  /* ====================================================================== */
+  /* Render                                                                 */
+  /* ====================================================================== */
+
+  var SPACE_ID = { oklab: 0, hcl: 1, srgb: 2 };
 
   /**
-   * Colour anchors, in aspect-corrected 0–1 space. Identical maths to the
-   * expression the AE build writes onto each 4-Color Gradient point, so an
-   * anchor sits in the same place in both renderers.
-   */
-  function anchors(r, offsets, aspect) {
-    var a = r.angle * Math.PI / 180;
-    var dir = [Math.cos(a), Math.sin(a)];
-    var ext = (r.spread / 100) * Math.max(aspect, 1);
-    var cx = aspect / 2, cy = 0.5;
-    var n = offsets.length;
-    var pts = [];
-    for (var i = 0; i < n; i++) {
-      var t = (n === 1 ? 0.5 : i / (n - 1)) - 0.5;
-      pts.push([
-        cx + dir[0] * t * ext + offsets[i][0] * ext,
-        cy + dir[1] * t * ext + offsets[i][1] * ext
-      ]);
-    }
-    return pts;
-  }
-
-  /* --------------------------------------------------------------- render */
-
-  var LUT_SIZE = 192;
-
-  /**
-   * Render one frame.
-   * @param {HTMLCanvasElement} canvas  display canvas
-   * @param {Object} params             panel parameters (pre-resolve)
-   * @param {Number} t                  seconds into the loop
+   * Draw one frame of `params` into `canvas`.
+   * @param {Number} t seconds into the loop
    */
   function render(canvas, params, t) {
-    var r = G.resolve(params);
     var rect = canvas.getBoundingClientRect();
-    var dw = Math.max(32, Math.round(rect.width || canvas.width || 240));
-    var dh = Math.max(18, Math.round(rect.height || canvas.height || 135));
-    if (canvas.width !== dw || canvas.height !== dh) { canvas.width = dw; canvas.height = dh; }
+    var dpr = Math.min(global.devicePixelRatio || 1, 2);
+    var w = Math.max(24, Math.round((rect.width || 240) * dpr));
+    var h = Math.max(16, Math.round((rect.height || 135) * dpr));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 
-    // Softness is bought by rendering smaller and letting the upscale blur it —
-    // cheap, and it keeps the preview responsive while a slider is moving.
-    var quality = canvas.dataset.q === 'hi' ? 1 : 0.62;
-    var scale = (1 - r.softness / 150) * quality;
-    var w = Math.max(12, Math.round(Math.min(dw, 230) * scale));
-    var h = Math.max(8, Math.round(w * dh / dw));
+    if (!init()) { fallback(canvas, params, w, h); return; }
 
-    var buf = canvas.__gfBuf;
-    if (!buf || buf.width !== w || buf.height !== h) {
-      buf = canvas.__gfBuf = document.createElement('canvas');
-      buf.width = w; buf.height = h;
-      canvas.__gfImg = null;
-    }
-    var bctx = buf.getContext('2d');
-    var img = canvas.__gfImg && canvas.__gfImg.width === w ? canvas.__gfImg : (canvas.__gfImg = bctx.createImageData(w, h));
-    var data = img.data;
-
-    var aspect = w / h;
-    var table = r.exact ? G.lut(r.colors, r.colorSpace, LUT_SIZE) : null;
-    var quad = r.colors.map(G.hexToRgb);
-    var quadExtra = r.extra ? r.extra.map(G.hexToRgb) : null;
-    var pts = anchors(r, r.offsets, aspect);
-    var ptsExtra = r.extraOffsets ? anchors(r, r.extraOffsets, aspect) : null;
-
-    var octaves = 1 + Math.round(r.complexity / 20);
-    var freq = 0.6 + (100 - r.scale) / 22;          // small Scale = busy field
-    var warp = (r.warp / 100) * 0.85;
-    var grain = r.grain / 100;
-    var seed = r.seed | 0;
-
-    // Seamless loop: evolution walks a circle in noise space (§5.3).
-    var phase = (r.phase / 360) * Math.PI * 2;
-    var revolutions = Math.max(1, Math.round(r.speed / 12));
-    var ang = r.speed ? phase + (t / Math.max(0.1, r.loop)) * revolutions * Math.PI * 2 : phase;
-    var ex = Math.cos(ang) * 1.4, ey = Math.sin(ang) * 1.4;
-
-    var a = r.angle * Math.PI / 180;
-    var dir = [Math.cos(a), Math.sin(a)];
-    var ext = (r.spread / 100) * Math.max(aspect, 1);
-    var cx = aspect / 2, cy = 0.5;
-
-    var rand = G.rng(seed + 7);
-    var noiseSeed = seed;
-
-    for (var py = 0, i = 0; py < h; py++) {
-      var vy = (py + 0.5) / h;
-      for (var px = 0; px < w; px++, i += 4) {
-        var vx = (px + 0.5) / w * aspect;
-        var x = vx, y = vy;
-
-        if (r.mode !== 'linear' && warp > 0) {
-          var wx = fbm(x * freq + ex, y * freq + ey, octaves, noiseSeed) - 0.5;
-          var wy = fbm(x * freq + ex + 5.2, y * freq + ey + 1.7, octaves, noiseSeed + 91) - 0.5;
-          if (r.mode === 'flow') {
-            // Displacement Map from an animated FIELD layer: the warp is itself
-            // pushed around by a second, slower field.
-            var fx = fbm(x * freq * 0.45 - ex, y * freq * 0.45 - ey, Math.max(1, octaves - 1), noiseSeed + 313) - 0.5;
-            wx += fx * 1.25;
-            wy += (fbm(x * freq * 0.45 - ex + 9.1, y * freq * 0.45 - ey + 3.3, Math.max(1, octaves - 1), noiseSeed + 577) - 0.5) * 1.25;
-          }
-          x += wx * warp * 1.6;
-          y += wy * warp * 1.6;
-        }
-
-        var cr, cg, cb;
-
-        if (table) {
-          var g;
-          if (r.shape === 'radial') {
-            g = Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / (ext / 2);
-          } else {
-            g = 0.5 + ((x - cx) * dir[0] + (y - cy) * dir[1]) / ext;
-          }
-          var c = table[Math.max(0, Math.min(LUT_SIZE - 1, Math.round(g * (LUT_SIZE - 1))))];
-          cr = c[0]; cg = c[1]; cb = c[2];
-        } else {
-          var acc = blend(quad, pts, x, y);
-          cr = acc[0]; cg = acc[1]; cb = acc[2];
-          if (quadExtra) {
-            // Stops 5–8 arrive through a noise luma matte, exactly as the AE
-            // build mixes its second 4-Color Gradient layer.
-            var m = fbm(x * freq * 0.8 + ex, y * freq * 0.8 + ey, Math.max(1, octaves - 1), noiseSeed + 4001);
-            m = Math.max(0, Math.min(1, (m - 0.34) * 2.4));
-            var acc2 = blend(quadExtra, ptsExtra, x, y);
-            cr += (acc2[0] - cr) * m;
-            cg += (acc2[1] - cg) * m;
-            cb += (acc2[2] - cb) * m;
-          }
-          cr *= 255; cg *= 255; cb *= 255;
-        }
-
-        if (grain) {
-          var n = (rand() - 0.5) * grain * 180;
-          cr += n; cg += n; cb += n;
-        }
-
-        data[i]     = cr < 0 ? 0 : cr > 255 ? 255 : cr;
-        data[i + 1] = cg < 0 ? 0 : cg > 255 ? 255 : cg;
-        data[i + 2] = cb < 0 ? 0 : cb > 255 ? 255 : cb;
-        data[i + 3] = 255;
-      }
+    // The shared surface only has to be as big as the largest target.
+    if (surface.width < w || surface.height < h) {
+      surface.width = Math.max(surface.width, w);
+      surface.height = Math.max(surface.height, h);
     }
 
-    bctx.putImageData(img, 0, 0);
+    var r = G.resolve(params);
+    var n = Math.min(r.colors.length, MAX);
+
+    for (var i = 0; i < MAX; i++) {
+      var k = Math.min(i, n - 1);
+      var c = G.hexToRgb(r.colors[k]);
+      buf.col[i * 3] = c[0]; buf.col[i * 3 + 1] = c[1]; buf.col[i * 3 + 2] = c[2];
+      var pt = r.points[k];
+      buf.home[i * 2] = pt.home[0]; buf.home[i * 2 + 1] = pt.home[1];
+      buf.orb[i * 3] = pt.rad; buf.orb[i * 3 + 1] = pt.harm; buf.orb[i * 3 + 2] = pt.ang;
+    }
+
+    var phase = r.motion ? (t / Math.max(0.5, r.loop)) * G.TAU : 0;
+
+    // Draw into the bottom-left of the shared surface — gl_FragCoord then
+    // starts at 0, and that region is the last h rows of the canvas image.
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(prog);
+    gl.uniform2f(U.uRes, w, h);
+    gl.uniform1f(U.uPhase, phase);
+    gl.uniform1f(U.uTime, t);
+    gl.uniform3fv(U.uCol, buf.col);
+    gl.uniform2fv(U.uHome, buf.home);
+    gl.uniform3fv(U.uOrb, buf.orb);
+    gl.uniform1f(U.uCount, n);
+    gl.uniform1f(U.uMotion, r.motion / 100);
+    gl.uniform1f(U.uBlend, r.blend / 100);
+    gl.uniform1f(U.uFlow, r.flow / 100);
+    gl.uniform1f(U.uGrain, r.grain / 100);
+    gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
+    gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     var ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    try { ctx.imageSmoothingQuality = 'high'; } catch (e) {}
-    ctx.clearRect(0, 0, dw, dh);
-    ctx.drawImage(buf, 0, 0, w, h, 0, 0, dw, dh);
+    ctx.drawImage(surface, 0, surface.height - h, w, h, 0, 0, w, h);
   }
 
-  /** Inverse-square weighting between four colour anchors — 4-Color Gradient. */
-  function blend(colors, pts, x, y) {
-    var wsum = 0, r = 0, g = 0, b = 0;
-    for (var i = 0; i < pts.length; i++) {
-      var dx = x - pts[i][0], dy = y - pts[i][1];
-      var w = 1 / (dx * dx + dy * dy + 0.012);
-      wsum += w;
-      r += colors[i][0] * w;
-      g += colors[i][1] * w;
-      b += colors[i][2] * w;
+  /**
+   * No WebGL (a very old CEF, or a GPU-blocked host): draw the same colour
+   * points as radial blobs. No warp and no per-pixel colour space, but the
+   * palette and the layout still read correctly.
+   */
+  function fallback(canvas, params, w, h) {
+    var r = G.resolve(params);
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = r.colors[0];
+    ctx.fillRect(0, 0, w, h);
+    var radius = (0.35 + r.blend / 220) * Math.max(w, h);
+    for (var i = 0; i < r.points.length; i++) {
+      var pt = G.pointAt(r.points[i], 0, r.motion);
+      var g = ctx.createRadialGradient(pt[0] * w, pt[1] * h, 0, pt[0] * w, pt[1] * h, radius);
+      g.addColorStop(0, r.colors[i]);
+      g.addColorStop(1, hexToRgba(r.colors[i], 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
     }
-    return [r / wsum, g / wsum, b / wsum];
+  }
+
+  function hexToRgba(hex, a) {
+    var c = G.hexToRgb(hex);
+    return 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' +
+           Math.round(c[2] * 255) + ',' + a + ')';
   }
 
   /* ------------------------------------------------------------ animation */
@@ -241,13 +334,13 @@
   }
 
   /**
-   * Keep a canvas playing its gradient. `paramsFn` is read every frame, so
-   * dragging a slider updates the animation in place.
+   * Keep a canvas playing. `paramsFn` is read every frame, so dragging a slider
+   * updates the animation in place.
    */
   function animate(canvas, paramsFn, fps) {
     stop(canvas);
     if (!start) start = performance.now();
-    running.push({ canvas: canvas, params: paramsFn, interval: 1000 / (fps || 20), last: 0 });
+    running.push({ canvas: canvas, params: paramsFn, interval: 1000 / (fps || 30), last: 0 });
     if (!raf) raf = requestAnimationFrame(tick);
   }
 
@@ -261,6 +354,8 @@
     render: render,
     animate: animate,
     stop: stop,
-    stopAll: stopAll
+    stopAll: stopAll,
+    /** True once a GL context is up — asking for it is what brings it up. */
+    get accelerated() { return init(); }
   };
 })(window);

@@ -1,93 +1,139 @@
-# GradientForge — v0.1.0
+# GradientForge — v0.2.0
 
 A dockable After Effects panel that generates gradient backgrounds — animated or
 still — with one hard rule: **no gradient is ever an asset**.
 
 There is no bitmap in this extension, no baked preview, no imported `.grd` or
 `.css`, and nothing is rendered to disk. A gradient is a handful of numbers that
-get turned into pixels twice: once by a canvas in the panel, once by a stack of
-native After Effects effects. Same parameters, same seed, same picture.
+get turned into pixels twice: once by a shader in the panel, once by a stack of
+native After Effects layers. Same numbers, same seed, same picture.
 
-That also means the output is not a black box. What lands in your comp is solids,
-stock effects and expressions — every value still draggable afterwards.
+The output is not a black box either. What lands in your comp is solids, shape
+layers, stock effects and expressions — every value still draggable afterwards.
 
 ---
 
-## The three modes
+## One engine
 
-| Mode | What it is | How it is built |
-|---|---|---|
-| **Linear** | Exact geometric ramp, linear or radial. The speed reference. | Gradient Ramp (2 stops) or 4-Color Gradient, anchors on the Angle/Spread axis |
-| **Noise Field** | Organic colour fields — fractal turbulence over the ramp. | + Turbulent Displace + Fast Box Blur |
-| **Flow Field** | The fluid look: the colour is advected by a second, animated field. | + a hidden Fractal Noise `FIELD` layer driving Displacement Map and CC Vector Blur |
+§5.1 asks for one engine done properly rather than a menu of modes, so there is
+exactly one: a **mesh**. Two to five colour points, blended by Gaussian weight
+in OKLab, with a low-frequency domain warp bending the field they sit in.
+Linear, radial and conic are special cases of this — points locked to an axis,
+a centre, an angular ring — and they arrive as presets, not as new code.
 
-All three share one parameter set — Seed, Scale, Complexity, Warp, Softness,
-Grain, Speed, Loop, Angle/Spread — and one colour system.
+### Why it is built this way
 
-Eleven presets ship with it. They are parameter sets, not pictures: each one
-costs zero bytes and redraws itself when the panel opens.
+§4.5 diagnosed the failure mode of the obvious pipeline, and every decision
+here answers one line of it:
+
+| The problem | What this does instead |
+|---|---|
+| High-frequency noise used as a **colour source** reads as smoke with a filter on it | Noise only ever moves coordinates. It is a domain warp at frequency ~1.15, two samples deep — it never picks a colour |
+| A 1D luminance lookup (Colorama-style) bands and leaves dead mid-tones | Colour is mixed **2D spatially** between points. No lookup, no ramp, no luminance channel |
+| sRGB interpolation turns blue↔orange into mud | The weighted mean is taken in **OKLab, in linear light**, then encoded back |
+| 8-bit output bands on any smooth gradient | The output always carries **at least one LSB of dither** — the floor under the Grain slider |
+| Blurring the result to "fix" it makes it more like smoke | Nothing is blurred to fix anything. The field is low-frequency from the start |
+
+The Gaussian core carries an inverse-quadratic tail. A bare Gaussian underflows
+far from every point, and where that happens the blend snaps between whichever
+floor wins — a visible crease. The tail never reaches zero, so distant areas
+fade into each other instead.
+
+### The loop
+
+The warp's sample offset travels a **closed circle** in noise space: at the end
+of the cycle the field is exactly back where it started. Each colour point
+orbits its home position at a whole harmonic of the loop — one, two or three
+turns — so it lands back where it began too. The loop is exact by construction,
+with no cross-fade anywhere.
+
+`Motion` scales the orbit **radius**, not the rate. So Motion 0 is a true still
+from the same engine, and turning Motion up can never break the loop.
+
+---
+
+## The panel
+
+Four sliders, and that is the whole surface (§7):
+
+| | |
+|---|---|
+| **Motion** | 0 = still · above 0 = animated, loop guaranteed |
+| **Blend** | how far the colours reach into each other |
+| **Flow** | how much the shape bends and drifts |
+| **Grain** | texture, and the dither that kills banding |
+
+Above them: six presets that each redraw themselves when the panel opens, and a
+palette of 2–5 swatches with **Shuffle** for a new seed and a fresh, harmonious
+palette. Under **Advanced**: loop length, seed, blend space, linear blending,
+precomp on/off, name, and Export still frame. **Copy settings** puts the whole
+parameter set on the clipboard as JSON.
+
+Nothing on the slider labels is a technical term — there is a Flow slider, not a
+noise-frequency slider.
+
+The chrome is achromatic on purpose. The gradient is the only saturated thing on
+screen, because a coloured interface shifts the colour judgement this panel
+exists to support.
 
 ---
 
 ## Colour
 
-Stops are interpolated in **RGB, HSL, OKLab or HCL** (HCL here is polar OKLab:
-hue, chroma, lightness). Perceptual blending happens in the panel, not in
-ExtendScript, and for a specific reason: **After Effects blends colour in sRGB.**
-So the panel subdivides your 2–8 stops in OKLab or HCL first and hands the host
-colours it only has to blend over short distances, where sRGB and OKLab agree to
-the eye.
+The panel's weighted mean can be taken in **OKLab**, **HCL** or **linear RGB**.
+HCL here is polar OKLab, and it keeps the weighted mean *chroma* rather than
+letting opposing hues cancel — which is what dulls a plain Lab mean.
 
-The palette buttons — Analogous, Complementary, Triadic, Monochrome — rebuild the
-whole stop list from the first colour, walking lightness and chroma across the
-set so it reads as a designed ramp. Under them is a live WCAG contrast readout:
-the worst stop against white and against black, so you know before you build
-whether text can sit on this without a scrim.
+A live WCAG contrast readout sits under the palette: the worst colour against
+white and against black, so you know before you build whether text can sit on
+this without a scrim.
 
----
-
-## Motion
-
-`Speed` above zero animates it; `Loop` sets the cycle length. The loop is
-**seamless by construction**, not by crossfade: evolution covers a whole number
-of revolutions per cycle and Cycle Evolution is switched on with the same number,
-so the last frame of the loop is the first frame again, exactly. Set Speed to 0
-and you get a still from the same engine.
-
-`Seed` locks it. Same seed plus same parameters is the same gradient, months
-later — which is what makes a client's approved background reproducible.
-
-**Freeze as still** time-remaps the selected gradient layer to a hold at the
-playhead: a frozen frame that is still a live, editable comp, not a render.
+**What After Effects can and cannot match.** No native effect composites in
+OKLab, so the build cannot reproduce that part. What it does get is the exact
+colour points and — with **Linear** on — linear-light compositing, which is the
+half of §4.5 that actually causes the mud. The blend-space choice is therefore a
+preview-side distinction, and the panel says so rather than implying otherwise.
+Linear blending is a project-wide After Effects setting, so it is an explicit
+switch, never a silent side effect; the result message tells you when a build
+turned it on.
 
 ---
 
 ## What actually gets built
 
 ```
-GF CONTROLLER    every parameter as a slider or colour control
-Grain            adjustment layer · Noise
-Warp             adjustment layer · Displacement Map + CC Vector Blur (flow)
-                                    Turbulent Displace + Fast Box Blur
-Colour Mix       4-Color Gradient for stops 5–8, mixed through…
-Mix Matte        …a Fractal Noise luma matte
-Colour Base      Gradient Ramp (2 stops, exact) or 4-Color Gradient
-FIELD            Fractal Noise, video off — the flow mode's vector source
+GF CONTROLLER   Motion · Blend · Flow · Grain · Loop · Seed + every colour
+Grain           adjustment layer · Noise, never below one LSB of dither
+Flow            adjustment layer · Turbulent Displace, low frequency
+Colour n…1      one soft colour point each: ellipse + Fast Box Blur,
+                position driven by a closed-orbit expression
+Base            solid · Fill, the first colour under everything
 ```
 
-Every effect parameter is an expression pointing at the controller, so Angle,
-Speed, Seed and the colours all stay live after the build. Turn **Precomp** off
-and the same stack is built straight into the current comp, at the bottom of the
-layer order.
+Every effect parameter is an expression pointing at the controller, so Motion,
+Blend, Flow, Grain, Loop, Seed and the colours all stay live after the build —
+drag Blend in the Effect Controls panel and every point re-softens together.
+Turn **Precomp** off and the same stack is built straight into the current comp,
+at the bottom of the layer order.
 
-### The constraint that shaped this
+**Export still frame** time-remaps the selected gradient layer to a hold at the
+playhead: a frozen frame that is still a live, editable comp, not a render.
 
-After Effects has **no scriptable multi-stop gradient**. Colorama's output cycle
-and a shape layer's gradient stops are both unreachable from ExtendScript. The
-two colour engines that *are* scriptable are Gradient Ramp (2 stops) and
-4-Color Gradient (4 anchors) — which is why the panel resamples perceptually
-before sending, and why stops 5–8 arrive as a second 4-Color Gradient layer mixed
-in through a noise luma matte rather than as more stops on one effect.
+### How the two renderers line up
+
+The panel's shader is the reference implementation. The build reproduces it with
+the pieces After Effects actually has:
+
+| Preview | After Effects |
+|---|---|
+| Gaussian weight per colour point | ellipse + Fast Box Blur, σ from the same Blend curve |
+| normalised weighted average | over composite, first colour as the base |
+| domain warp, frequency 1.15 | Turbulent Displace, Size ≈ 0.32 × comp height, Complexity 1 |
+| warp offset on a closed circle | the same circle, as an expression on Offset (Turbulence) |
+| dither floor of 0.9/255 | Noise at 0.35 % + Grain |
+
+Both take their colour-point placement from `resolve()` in
+`js/data/gradients.js`, so a point sits in the same spot in both.
 
 ---
 
@@ -117,8 +163,8 @@ Windows  %APPDATA%\Adobe\CEP\extensions\
 
 ### Developing without AE
 
-Open `index.html` in a browser — the CEP bridge falls back to a mock host, so the
-whole panel and every preview are fully developable without launching After
+Open `index.html` in a browser — the CEP bridge falls back to a mock host, so
+the whole panel and every preview are fully developable without launching After
 Effects. `.debug` also exposes CEF DevTools on port 8089.
 
 ---
@@ -126,8 +172,8 @@ Effects. `.debug` also exposes CEF DevTools on port 8089.
 ## Using it
 
 1. Open a comp.
-2. Pick a preset, or set Mode and the colour stops yourself.
-3. Tune the generator. The preview is live — Shuffle seed until one lands.
+2. Click a preset, or set the palette yourself.
+3. Move the four sliders. The preview is live — Shuffle until one lands.
 4. **Create gradient**.
 
 One undo step removes the whole thing.
@@ -139,57 +185,63 @@ One undo step removes the whole thing.
 ```
 CSXS/manifest.xml         panel registration, host versions, geometry
 index.html                markup
-css/panel.css             AE-native chrome, presets, stops, the gradient UI
+css/panel.css             achromatic chrome, presets, palette, sliders
 js/
   lib/cep-bridge.js       evalScript / theme / host info
   lib/controls.js         one labelled control per parameter definition
   data/gradients.js       ← colour spaces, seeded RNG, presets, resolve()
-  data/gradient-preview.js  canvas renderer — the same gradient, drawn here
+  data/gradient-preview.js  the mesh engine as a fragment shader
   app.js                  the panel
 jsx/
   host.jsx                #includes everything, in dependency order
   api.jsx                 the one function the panel calls; undo grouping
   core/utils.jsx          comps, colour, expression controls, blur
-  engine.jsx              the native effect chain: solids, effects, expressions
+  engine.jsx              the native layer stack
 ```
 
-`js/data/gradients.js` is the contract between the two renderers: both the canvas
-preview and the AE build read the same parameter schema, the same colour maths
-and the same seeded RNG, so what you preview is what gets built.
+`js/data/gradients.js` is the contract between the two renderers: both read the
+same parameter schema, the same colour maths and the same seeded placement.
+
+One WebGL context renders everything — the hero and all six preset tiles — by
+drawing into a shared surface and blitting, so the panel costs one context
+rather than seven. Without WebGL it falls back to radial blobs on a 2D canvas:
+palette and layout still read, the warp does not.
 
 ---
 
 ## Against the spec
 
-Delivered: zero-asset generation (§1) ✓ three generator modes — Linear, Noise,
-Flow (§9 MVP) ✓ RGB/HSL/OKLab/HCL interpolation (§5.2) ✓ 2–8 colour stops with a
-palette generator and a contrast warning (§5.2) ✓ still and animated from one
-engine (§5.3) ✓ seamless loop and seed lock (§5.3) ✓ expression-driven parameters
-on a single controller (§5.4) ✓ editable native output — the "Convert to Editable
-Layers" promise, except the output was never anything else (§4). Option B was
-taken, as the spec recommends (§6).
+Delivered: zero-asset generation (§1) ✓ one mesh engine, done to the §4.5
+diagnosis — noise as warp only, 2D spatial colour mixing, OKLab in linear light,
+permanent dither floor, no corrective blur (§5.1) ✓ 2–5 colour points with a
+palette generator, Shuffle and a contrast warning (§5.2) ✓ still and animated
+from one engine, exact loop by construction, seed lock (§5.3) ✓ every parameter
+an expression on one controller (§5.4) ✓ the four-slider preset-first
+achromatic panel with Advanced collapsed, Copy settings, Export still frame
+(§7) ✓ editable native output — the "Convert to Editable Layers" promise,
+except the output was never anything else (§4). Option B, as §6 recommends.
 
 ### Honest limits
 
-- **Not yet tested inside After Effects.** The panel side is verified in a real
-  browser and the ExtendScript side against a mock of AE's object model (layers,
-  effect groups, property value types) — enough to prove the build logic and
-  every generated expression, not enough to prove render performance or that
-  every effect index matches on every AE version. Effect lookups fall back from
-  match name to index and every write is guarded, so a mismatch costs one
-  parameter, not the build. **Spec step 2 — the performance prototype — is the
-  next thing to do**, and Flow mode is where it will hurt: Displacement Map plus
-  CC Vector Blur plus Turbulent Displace is the heaviest chain here.
-- **Preview fidelity is close, not exact.** The canvas mirrors the chain stage
-  for stage — inverse-square anchor blending for 4-Color Gradient, fbm domain
-  warp for Turbulent Displace — but AE's noise is not this noise. Treat the
-  preview as a faithful sketch of the look, not a frame-accurate proxy. Softness
-  is approximated by render scale rather than a real blur.
-- **Mesh, Plasma, Metaball and Magnetic modes** (spec §5.1) are not here; this is
-  the three modes the roadmap asks for in the MVP.
-- **Trigger Layer** (spec §5.4, driving parameters from another layer's
-  brightness or audio) is v1.5 and not started — though every parameter is
-  already a controller slider, which is the hard half of it.
-- **`.zxp` signing.** Needs an Adobe code-signing certificate; `build-zxp.sh`
+- **Not yet tested inside After Effects.** The panel is verified in a real
+  browser — WebGL preview, animation, controls, error paths — and the
+  ExtendScript side against a mock of AE's object model (layers, shape groups,
+  effect groups, property value types), which proves the build logic and every
+  generated expression but not render performance, and not that every effect
+  index matches on every AE version. Lookups fall back from match name to index
+  and every write is guarded, so a mismatch costs one parameter, not the build.
+  **Spec step 2 — the performance prototype — is still the next thing to do.**
+  The load is much lighter than the previous architecture (no displacement map,
+  no vector blur, one low-frequency Turbulent Displace), but it is unmeasured.
+- **The AE composite is an over composite, not a normalised weighted average.**
+  Soft points over a base colour read the same way at normal Blend values; at
+  very low Blend the topmost point dominates more than the preview shows.
+- **OKLab compositing is preview-only**, for the reason given under Colour.
+- **Magnetic and Contour** (§5.1 v2.0) need genuinely new code and are not here.
+  Linear / Radial / Conic and the Metaball look are parameter restrictions of
+  this engine and are not yet shipped as presets.
+- **Trigger Layer** (§5.4 / §7 Advanced) is v1.5 and not started — though every
+  parameter is already a controller slider, which is the hard half of it.
+- **`.zxp` signing** needs an Adobe code-signing certificate; `build-zxp.sh`
   wraps `ZXPSignCmd` once you have one.
-- **Windows untested.** No Mac-only paths, but it hasn't been run there.
+- **Windows untested.** No Mac-only paths, but it has not been run there.

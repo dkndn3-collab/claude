@@ -1,12 +1,14 @@
 /**
  * app.js — the panel (§7).
  *
- * A live preview at the top, presets under it, then the parameter set. Every
- * change re-renders the canvas immediately; Create sends the resolved payload
- * to jsx/engine.jsx, which assembles the native effect chain in After Effects.
+ * The layout follows one rule from the spec: **at most four sliders on the
+ * surface.** Everything else is a preset, a button, or lives under Advanced.
+ * Preset first, slider second — nobody should have to find a good gradient by
+ * turning knobs from zero.
  *
- * The preview is a real render of the same maths, not a picture of one — see
- * js/data/gradient-preview.js.
+ * The chrome is deliberately achromatic. The gradient is the only colour on
+ * screen, because a coloured interface would bias the colour judgement this
+ * panel exists to support.
  */
 (function (global) {
   'use strict';
@@ -20,16 +22,16 @@
     output: { precomp: true, name: '' }
   };
   var reduceMotion = false;
-  try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  try { reduceMotion = global.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
   /* --------------------------------------------------------------- status */
 
   var statusTimer = null;
-  function setStatus(msg, state_) {
+  function setStatus(msg, kind) {
     clearTimeout(statusTimer);
     el.statusMsg.textContent = msg;
-    el.status.setAttribute('data-state', state_ || 'idle');
-    if (state_ === 'ok' || state_ === 'err') {
+    el.status.setAttribute('data-state', kind || 'idle');
+    if (kind === 'ok' || kind === 'err') {
       statusTimer = setTimeout(function () {
         el.statusMsg.textContent = 'Ready';
         el.status.setAttribute('data-state', 'idle');
@@ -39,6 +41,7 @@
 
   /* ---------------------------------------------------------------- theme */
 
+  /** Follow the host's brightness — neutral either way, never coloured. */
   function applyHostTheme() {
     var luma = global.CEP.hostBackgroundLuma();
     if (luma == null) return;
@@ -50,59 +53,63 @@
   function build(view) {
     view.innerHTML = '' +
       '<div class="gf-hero-wrap">' +
-        '<canvas class="gf-hero" id="gfHero" data-q="hi"></canvas>' +
-        '<div class="gf-hero-bar">' +
-          '<button class="gf-pill" id="gfShuffle" title="New seed">Shuffle seed</button>' +
-          '<span class="gf-badge" id="gfBadge"></span>' +
-        '</div>' +
+        '<canvas class="gf-hero" id="gfHero"></canvas>' +
+        '<div class="gf-hero-bar"><span class="gf-badge" id="gfBadge"></span></div>' +
       '</div>' +
-      '<p class="bnote" id="gfNote"></p>' +
-      '<div class="section-label"><span>Presets</span><span>' + G.presets.length + '</span></div>' +
+
       '<div class="gf-presets" id="gfPresets"></div>' +
-      '<div class="bsection"><div class="bsection-title">Colour stops</div>' +
+
+      '<div class="gf-palette">' +
         '<div class="gf-stops" id="gfStops"></div>' +
-        '<div class="chips" id="gfHarmony"></div>' +
-        '<p class="bnote" id="gfContrast"></p>' +
+        '<button class="btn" id="gfShuffle" title="New seed and a fresh palette">Shuffle</button>' +
       '</div>' +
-      '<div class="bsection"><div class="bsection-title">Generator</div><div id="gfFields"></div></div>' +
-      '<div class="bsection"><div class="bsection-title">Output</div><div id="gfOutput"></div>' +
-        '<p class="bnote">Nothing is imported: the layer stack is solids, native effects and expressions, ' +
-        'so every value stays editable after it is built.</p>' +
-      '</div>' +
+      '<p class="bnote" id="gfContrast"></p>' +
+
+      '<div class="gf-sliders" id="gfSliders"></div>' +
+
       '<div class="gf-actions">' +
-        '<button class="btn" id="gfFreeze" title="Freeze the selected gradient layer at the playhead">Freeze as still</button>' +
+        '<button class="btn" id="gfCopy" title="Copy the parameters as JSON">Copy settings</button>' +
         '<button class="btn primary" id="gfCreate">Create gradient</button>' +
-      '</div>';
+      '</div>' +
+
+      '<details class="gf-adv" id="gfAdv">' +
+        '<summary>Advanced</summary>' +
+        '<div id="gfAdvFields"></div>' +
+        '<div id="gfOutput"></div>' +
+        '<div class="gf-actions gf-actions-sub">' +
+          '<button class="btn" id="gfFreeze" title="Freeze the selected gradient layer at the playhead">Export still frame</button>' +
+        '</div>' +
+        '<p class="bnote" id="gfEngine"></p>' +
+        '<p class="bnote">Space picks how the preview takes its weighted mean. ' +
+        'After Effects has no effect that composites in OKLab, so the build gets ' +
+        'the exact colour points and — with Linear on — linear-light compositing, ' +
+        'which is the part that keeps blue↔orange out of the mud.</p>' +
+      '</details>';
 
     el.view = view;
     el.hero = view.querySelector('#gfHero');
     el.badge = view.querySelector('#gfBadge');
-    el.note = view.querySelector('#gfNote');
     el.presets = view.querySelector('#gfPresets');
     el.stops = view.querySelector('#gfStops');
-    el.harmony = view.querySelector('#gfHarmony');
     el.contrast = view.querySelector('#gfContrast');
-    el.fields = view.querySelector('#gfFields');
+    el.sliders = view.querySelector('#gfSliders');
+    el.advFields = view.querySelector('#gfAdvFields');
     el.output = view.querySelector('#gfOutput');
+    el.engine = view.querySelector('#gfEngine');
     el.create = view.querySelector('#gfCreate');
     el.freeze = view.querySelector('#gfFreeze');
+    el.copy = view.querySelector('#gfCopy');
     el.shuffle = view.querySelector('#gfShuffle');
 
-    el.shuffle.addEventListener('click', function () {
-      state.params.seed = 1 + Math.floor(Math.random() * 9998);
-      state.params.preset = null;
-      C.sync(el.fields, 'seed', state.params.seed);
-      renderPresets();
-      refresh();
-    });
+    el.shuffle.addEventListener('click', shuffle);
     el.create.addEventListener('click', create);
     el.freeze.addEventListener('click', freeze);
+    el.copy.addEventListener('click', copySettings);
 
     renderPresets();
     renderStops();
-    renderHarmony();
-    renderFields();
-    renderOutput();
+    renderSliders();
+    renderAdvanced();
     refresh();
   }
 
@@ -113,7 +120,7 @@
     G.presets.forEach(function (pr) {
       var b = document.createElement('button');
       b.className = 'gf-preset' + (state.params.preset === pr.id ? ' on' : '');
-      b.title = pr.name + ' · ' + G.modeById(pr.mode).name;
+      b.title = pr.name;
       var cv = document.createElement('canvas');
       cv.className = 'gf-preset-art';
       b.appendChild(cv);
@@ -123,7 +130,7 @@
       b.appendChild(name);
       b.addEventListener('click', function () {
         state.params = G.fromPreset(pr.id);
-        renderPresets(); renderStops(); renderFields(); refresh();
+        renderPresets(); renderStops(); syncControls(); refresh();
       });
       el.presets.appendChild(b);
       // Each tile draws its own first frame — a rendering, never a thumbnail.
@@ -133,7 +140,7 @@
     });
   }
 
-  /* ---------------------------------------------------------------- stops */
+  /* ------------------------------------------------------------- palette */
 
   function renderStops() {
     el.stops.innerHTML = '';
@@ -144,11 +151,11 @@
       var input = document.createElement('input');
       input.type = 'color';
       input.value = hex;
-      input.title = 'Stop ' + (i + 1) + ' — ' + hex;
+      input.title = 'Colour ' + (i + 1) + ' — ' + hex;
+      input.setAttribute('aria-label', 'Colour ' + (i + 1));
       input.addEventListener('input', function () {
         state.params.colors[i] = input.value;
-        state.params.preset = null;
-        renderPresets();
+        clearPreset();
         refresh();
       });
       wrap.appendChild(input);
@@ -157,86 +164,87 @@
         var rm = document.createElement('button');
         rm.className = 'gf-stop-rm';
         rm.textContent = '×';
-        rm.title = 'Remove stop';
-        rm.addEventListener('click', function () {
+        rm.title = 'Remove colour';
+        rm.addEventListener('click', function (ev) {
+          ev.stopPropagation();
           state.params.colors.splice(i, 1);
-          state.params.preset = null;
-          renderPresets(); renderStops(); refresh();
+          clearPreset(); renderStops(); refresh();
         });
         wrap.appendChild(rm);
       }
       el.stops.appendChild(wrap);
     });
 
-    if (state.params.colors.length < 8) {
+    if (state.params.colors.length < G.maxColors) {
       var add = document.createElement('button');
       add.className = 'gf-stop-add';
       add.textContent = '+';
-      add.title = 'Add a colour stop (max 8)';
+      add.title = 'Add a colour (max ' + G.maxColors + ')';
       add.addEventListener('click', function () {
         var c = state.params.colors;
-        // The new stop continues the ramp rather than repeating it: one step
-        // further along the current harmony from the last colour.
+        // The new colour continues the palette rather than repeating it.
         c.push(G.palette(c[c.length - 1], state.harmony, 2)[1]);
-        state.params.preset = null;
-        renderPresets(); renderStops(); refresh();
+        clearPreset(); renderStops(); refresh();
       });
       el.stops.appendChild(add);
     }
   }
 
-  function renderHarmony() {
-    el.harmony.innerHTML = '';
-    G.harmonies.forEach(function (h) {
-      var b = document.createElement('button');
-      b.className = 'chip' + (state.harmony === h.id ? ' on' : '');
-      b.textContent = h.name;
-      b.title = 'Rebuild the stops from the first colour, ' + h.name.toLowerCase();
-      b.addEventListener('click', function () {
-        state.harmony = h.id;
-        state.params.colors = G.palette(state.params.colors[0], h.id, state.params.colors.length);
-        state.params.preset = null;
-        renderHarmony(); renderPresets(); renderStops(); refresh();
-      });
-      el.harmony.appendChild(b);
-    });
+  function shuffle() {
+    var rand = G.rng(Math.floor(Math.random() * 100000));
+    state.params.seed = 1 + Math.floor(rand() * 9998);
+    state.params.colors = G.randomPalette(state.params.colors.length, rand);
+    clearPreset();
+    renderStops();
+    syncControls();
+    refresh();
+  }
+
+  function clearPreset() {
+    state.params.preset = null;
+    var on = el.presets.querySelector('.gf-preset.on');
+    if (on) on.classList.remove('on');
   }
 
   /* --------------------------------------------------------------- fields */
 
-  function renderFields() {
-    el.fields.innerHTML = '';
-    G.params.forEach(function (p) {
-      el.fields.appendChild(C.field(p, state.params, onChange));
+  function renderSliders() {
+    el.sliders.innerHTML = '';
+    G.paramsOf('main').forEach(function (p) {
+      el.sliders.appendChild(C.field(p, state.params, onChange));
+      if (p.blurb) {
+        var note = document.createElement('p');
+        note.className = 'gf-slider-note';
+        note.textContent = p.blurb;
+        el.sliders.appendChild(note);
+      }
     });
-    refreshVisibility();
   }
 
-  function renderOutput() {
+  function renderAdvanced() {
+    el.advFields.innerHTML = '';
+    G.paramsOf('advanced').forEach(function (p) {
+      el.advFields.appendChild(C.field(p, state.params, onChange));
+    });
+
     el.output.innerHTML = '';
     el.output.appendChild(C.field(
-      { key: 'precomp', label: 'Precomp', type: 'bool' },
-      state.output,
-      function () {}
-    ));
+      { key: 'precomp', label: 'Precomp', type: 'bool' }, state.output, function () {}));
     el.output.appendChild(C.field(
-      { key: 'name', label: 'Name', type: 'text', placeholder: 'GRADIENT — ' + G.modeById(state.params.mode).name },
-      state.output,
-      function () {}
-    ));
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'GRADIENT — Mesh' },
+      state.output, function () {}));
   }
 
   function onChange(key) {
-    if (key === 'mode' || key === 'speed') refreshVisibility();
-    if (key !== 'seed') state.params.preset = null;
-    renderPresets();
+    if (key !== 'precomp' && key !== 'name') clearPreset();
     refresh();
   }
 
-  function refreshVisibility() {
+  /** Push preset/shuffle changes back into the controls that show them. */
+  function syncControls() {
     G.params.forEach(function (p) {
-      var node = el.fields.querySelector('.field[data-key="' + p.key + '"]');
-      if (node) node.hidden = !G.visible(p, state.params);
+      C.sync(el.sliders, p.key, state.params[p.key]);
+      C.sync(el.advFields, p.key, state.params[p.key]);
     });
   }
 
@@ -244,39 +252,41 @@
 
   function refresh() {
     var p = state.params;
-    var r = G.resolve(p);
 
-    el.badge.textContent = G.modeById(p.mode).name + ' · seed ' + p.seed +
-      (p.speed ? ' · loops ' + p.loop + 's' : ' · still');
+    el.badge.textContent = (p.motion ? 'loops ' + p.loop + 's' : 'still') +
+      ' · ' + p.colors.length + ' colours · seed ' + p.seed;
 
     var read = G.readability(p.colors);
     el.contrast.textContent = read.note;
     el.contrast.className = 'bnote' + (read.ok ? '' : ' warn');
 
-    var stopWord = p.colors.length + ' stop' + (p.colors.length === 1 ? '' : 's');
-    el.note.textContent = r.exact
-      ? stopWord + ' · Gradient Ramp, exact ' + p.shape + ' · ' + G.modeById(p.mode).blurb
-      : stopWord + ' → ' + r.colors.length + (r.extra ? ' + ' + r.extra.length : '') +
-        ' anchors blended in ' + p.colorSpace.toUpperCase() + ' · ' + G.modeById(p.mode).blurb;
-
     PV.stop(el.hero);
-    if (p.speed > 0 && !reduceMotion) {
-      PV.animate(el.hero, function () { return state.params; }, 20);
+    if (p.motion > 0 && !reduceMotion) {
+      PV.animate(el.hero, function () { return state.params; }, 30);
     } else {
       PV.render(el.hero, p, 0);
     }
+
+    // Read after the first render — that is when the renderer knows whether it
+    // got a GPU context.
+    el.engine.textContent = 'Mesh · ' + p.colorSpace.toUpperCase() + ' · preview ' +
+      (PV.accelerated ? 'on the GPU' : 'in software (no WebGL here)') +
+      ' · the layer stack is solids, native effects and expressions — nothing is imported.';
   }
 
   /* ---------------------------------------------------------------- build */
 
-  function create() {
-    var payload = G.resolve(JSON.parse(JSON.stringify(state.params)));
-    payload.precomp = !!state.output.precomp;
-    payload.name = (state.output.name || '').trim();
+  function payload() {
+    var out = G.resolve(JSON.parse(JSON.stringify(state.params)));
+    out.precomp = !!state.output.precomp;
+    out.name = (state.output.name || '').trim();
+    return out;
+  }
 
+  function create() {
     el.create.disabled = true;
     setStatus('Building gradient…', 'busy');
-    global.CEP.call('gradient', payload)
+    global.CEP.call('gradient', payload())
       .then(function (msg) { setStatus(msg || 'Gradient created', 'ok'); })
       .catch(function (err) { setStatus(err.message || 'Could not build the gradient', 'err'); })
       .then(function () { el.create.disabled = false; });
@@ -287,6 +297,45 @@
     global.CEP.call('freeze', {})
       .then(function (msg) { setStatus(msg || 'Frozen', 'ok'); })
       .catch(function (err) { setStatus(err.message || 'Could not freeze the layer', 'err'); });
+  }
+
+  /** Copy settings — the same numbers the host builds from (§7). */
+  function copySettings() {
+    var p = state.params;
+    var text = JSON.stringify({
+      generator: 'mesh',
+      colorSpace: p.colorSpace.toUpperCase(),
+      colors: p.colors,
+      motion: p.motion,
+      blend: p.blend,
+      flow: p.flow,
+      grain: p.grain,
+      loopSeconds: p.loop,
+      seed: p.seed
+    }, null, 2);
+
+    var done = function () {
+      var label = el.copy.textContent;
+      el.copy.textContent = 'Copied';
+      setTimeout(function () { el.copy.textContent = label; }, 1200);
+    };
+    try {
+      navigator.clipboard.writeText(text).then(done, function () { legacyCopy(text, done); });
+    } catch (e) {
+      legacyCopy(text, done);
+    }
+  }
+
+  /** CEF without the async clipboard API still has execCommand. */
+  function legacyCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { setStatus('Could not reach the clipboard', 'err'); }
+    document.body.removeChild(ta);
   }
 
   /* ------------------------------------------------------------------ boot */
