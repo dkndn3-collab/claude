@@ -120,6 +120,57 @@ keeps its four sliders.
 
 ---
 
+## Geometry modes — step 1 of 4
+
+A second generator is going in, and it is **one** feature with several geometry
+sources rather than several features: shape, curve and text all reduce to a
+signed distance field, and the colour pipeline downstream never learns which
+one drew it.
+
+```
+geometry source  →  raster  →  seed  →  jump flood  →  SDF  →  coordinate  →  colour
+   (3 variants)                (one pipeline)                 (2 axes)      (unchanged)
+```
+
+**Landed: the SDF pipeline, tested against Shape / ellipse only.**
+
+- The distance transform is **jump flooding** on the GPU — 9 ping-pong passes
+  for a 512-wide field, each looking at nine neighbours a halving step apart.
+  A CPU transform would be correct and far too slow to stay interactive.
+- Seeds are placed **sub-pixel**: a boundary pixel's seed is nudged along the
+  coverage gradient to where coverage would be exactly 0.5, which is most of
+  what keeps the finished field smooth.
+- The field is rebuilt **only when the geometry signature changes**. Animation
+  never rebuilds it — the warp moves the sample coordinate, not the shape.
+- Encoding is WebGL1-safe, no float textures: 16-bit packed distance in R,G,
+  with **B reserved for the along-the-boundary coordinate** (step 2) and **A
+  for the glyph id** (Letter mode). Both are in the format now, because
+  retrofitting them later costs more.
+- The colour pipeline is untouched: same warp, same closed-circle loop, same
+  dither, palette walked in OKLab in linear light.
+
+Measured against an analytic circle over 21,888 samples: **max error 0.7 px,
+mean 0.37 px, sign 100 % correct** on a 512 × 384 field. At Grain 0 the longest
+run of identical pixels along a scanline is 4 px with no clamping (the mesh
+engine's is 11), so the dither is doing its job on the smoother gradient. Frame
+0 and frame `loopSeconds` are pixel-identical in Shape mode.
+
+Still to come, in order: the `Direction` slider blending the across-`d` and
+along-`t` coordinates (step 2), Curve with a pen tool (step 3), Letter with the
+glyph id buffer (step 4).
+
+**On a closed curve path** — the open question in the brief — the plan is to
+*reflect* `t` rather than wrap it, so `t` and `1-t` give the same colour and the
+seam disappears. Wrapping leaves a hard edge wherever the path closes unless the
+first and last colours match, which they do not in most of the 414 palettes. A
+`Wrap` switch can opt into a truly cyclic ramp.
+
+The After Effects build covers the mesh engine. A geometry mode has no native
+equivalent yet, so **Create** is disabled there and says why, rather than
+quietly building something else.
+
+---
+
 ## Colour
 
 The panel's weighted mean can be taken in **OKLab**, **HCL** or **linear RGB**.
@@ -233,6 +284,7 @@ js/
   lib/cep-bridge.js       evalScript / theme / host info
   lib/controls.js         one labelled control per parameter definition
   data/library.js         ← the 408-palette database and its motion profiles
+  data/sdf.js             ← geometry raster → seeds → jump flood → SDF texture
   data/gradients.js       ← colour spaces, seeded RNG, presets, resolve()
   data/gradient-preview.js  the mesh engine as a fragment shader
   app.js                  the panel

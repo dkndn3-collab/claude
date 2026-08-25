@@ -234,21 +234,55 @@
     { value: 'srgb',  label: 'Linear RGB' }
   ];
 
+  /**
+   * Generator modes. Mesh blends colour points; the geometry modes drive the
+   * same colour pipeline from a signed distance field instead. Curve and
+   * Letter are the same pipeline with a different rasteriser and land next.
+   */
+  var MODES = [
+    { id: 'mesh',  name: 'Mesh' },
+    { id: 'shape', name: 'Shape' }
+  ];
+
+  var SHAPE_OPTS = [{ value: 'ellipse', label: 'Ellipse' }];
+
+  /**
+   * `modes` limits a parameter to the generators it means something for, which
+   * is how the visible slider set changes per mode instead of growing. Mesh
+   * shows four; Shape shows five, the ceiling.
+   */
   var PARAMS = [
     { key: 'motion', label: 'Motion', type: 'number', value: 34, min: 0, max: 100, step: 1, group: 'main',
       blurb: '0 = still · above 0 = animated, loop guaranteed' },
     { key: 'blend',  label: 'Blend',  type: 'number', value: 62, min: 0, max: 100, step: 1, group: 'main',
-      blurb: 'how far the colours reach into each other' },
+      modes: ['mesh'], blurb: 'how far the colours reach into each other' },
+    { key: 'size',   label: 'Size',   type: 'number', value: 46, min: 4, max: 140, step: 1, group: 'main',
+      modes: ['shape'], blurb: 'how much of the frame the shape covers' },
+    { key: 'spread', label: 'Spread', type: 'number', value: 34, min: 1, max: 100, step: 1, group: 'main',
+      modes: ['shape'], blurb: 'how far the ramp reaches from the boundary' },
     { key: 'flow',   label: 'Flow',   type: 'number', value: 28, min: 0, max: 100, step: 1, group: 'main',
       blurb: 'how much the shape bends and drifts' },
     { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1, group: 'main',
       blurb: 'texture, and the dither that kills banding' },
 
-    { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1, group: 'advanced' },
+    { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1,
+      group: 'advanced', modes: ['mesh'] },
+    { key: 'shapeX',  label: 'Offset X', type: 'number', value: 0, min: -60, max: 60, step: 1,
+      group: 'advanced', modes: ['shape'] },
+    { key: 'shapeY',  label: 'Offset Y', type: 'number', value: 0, min: -60, max: 60, step: 1,
+      group: 'advanced', modes: ['shape'] },
+    { key: 'rotate',  label: 'Rotate', type: 'number', value: 0, min: 0, max: 360, step: 1,
+      group: 'advanced', modes: ['shape'], unit: '°' },
     { key: 'loop',       label: 'Loop', type: 'number', value: 12, min: 2, max: 60, step: 1, unit: 's', group: 'advanced' },
     { key: 'seed',       label: 'Seed',        type: 'number', value: 431, min: 1, max: 9999, step: 1, group: 'advanced' },
     { key: 'colorSpace', label: 'Space', type: 'select', value: 'oklab', options: SPACE_OPTS, group: 'advanced' },
-    { key: 'linearBlending', label: 'Linear', type: 'bool', value: true, group: 'advanced' }
+    { key: 'linearBlending', label: 'Linear', type: 'bool', value: true, group: 'advanced' },
+
+    /* Geometry row — shown only while a geometry mode is active. */
+    { key: 'shape', label: 'Shape', type: 'select', value: 'ellipse', options: SHAPE_OPTS,
+      group: 'geometry', modes: ['shape'] },
+    { key: 'fill',  label: 'Fill',  type: 'bool', value: false,
+      group: 'geometry', modes: ['shape'] }
   ];
 
   /* ====================================================================== */
@@ -309,6 +343,7 @@
     PARAMS.forEach(function (p) { out[p.key] = p.value; });
     out.colors = SIGNATURE[0].colors.slice();
     out.preset = null;
+    out.mode = 'mesh';
     return out;
   }
 
@@ -327,8 +362,17 @@
     return null;
   }
 
-  function paramsOf(group) {
-    return PARAMS.filter(function (p) { return p.group === group; });
+  /** The parameters of one group that apply to one mode. */
+  function paramsOf(group, mode) {
+    return PARAMS.filter(function (p) {
+      if (p.group !== group) return false;
+      return !p.modes || p.modes.indexOf(mode || 'mesh') !== -1;
+    });
+  }
+
+  function modeById(id) {
+    for (var i = 0; i < MODES.length; i++) if (MODES[i].id === id) return MODES[i];
+    return MODES[0];
   }
 
   /* ====================================================================== */
@@ -365,7 +409,19 @@
     }
 
     return {
-      label: p.preset ? (presetById(p.preset) || {}).name : 'Mesh',
+      label: p.preset ? (presetById(p.preset) || {}).name : modeById(p.mode).name,
+      mode: p.mode || 'mesh',
+      // Everything the SDF pipeline needs, and nothing the shader needs to
+      // know about — the rasteriser reads this, the colour pipeline does not.
+      geometry: {
+        shape: p.shape || 'ellipse',
+        size: p.size,
+        x: p.shapeX,
+        y: p.shapeY,
+        rotate: p.rotate,
+        spread: p.spread,
+        fill: !!p.fill
+      },
       colors: colors,
       points: points,
       motion: p.motion,
@@ -398,6 +454,7 @@
   global.GRADIENTS = {
     TAU: TAU,
     maxColors: MAX_COLORS,
+    modes: MODES,
     params: PARAMS,
     presets: PRESETS,
     signature: SIGNATURE,
@@ -410,6 +467,7 @@
     fromPreset: fromPreset,
     presetById: presetById,
     paramsOf: paramsOf,
+    modeById: modeById,
     resolve: resolve,
     pointAt: pointAt,
 

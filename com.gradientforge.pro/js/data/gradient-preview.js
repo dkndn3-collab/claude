@@ -44,6 +44,11 @@
     'uniform float uSeed;',
     'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
     '',
+    'uniform float uMode;       // 0 = mesh · 1 = geometry (SDF)',
+    'uniform sampler2D uSDF;    // R,G signed distance · B along · A glyph id',
+    'uniform float uSpread;     // ramp width across the boundary, frame heights',
+    'uniform float uFill;       // 1 = confined inside · 0 = bleeding both ways',
+    '',
     'const float TAU = 6.28318530718;',
     '',
     '/* ---------- transfer functions ---------- */',
@@ -90,6 +95,37 @@
     '  float c = hash21(i + vec2(0.0, 1.0));',
     '  float d = hash21(i + vec2(1.0, 1.0));',
     '  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);',
+    '}',
+    '',
+    '/* Grain doubles as dither, and every mode goes out through this one',
+    '   function. Even at Grain = 0 a sub-LSB amount stays in, because 8-bit',
+    '   output without dither WILL band on a smooth gradient (§4.5). */',
+    'vec3 dither(vec3 col){',
+    '  float g = hash21(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5;',
+    '  return col + g * (0.9/255.0 + uGrain * 0.055);',
+    '}',
+    '',
+    '/* The ramp for the geometry modes: the palette walked in OKLab, in linear',
+    '   light, never in sRGB. The mesh path takes a weighted mean of the same',
+    '   colours; this walks them in order. Both end up in linear light. */',
+    'vec3 rampLin(float g){',
+    '  float n = max(uCount - 1.0, 1.0);',
+    '  float x = clamp(g, 0.0, 1.0) * n;',
+    '  bool lab = uSpace < 1.5;',
+    '  vec3 acc = lab ? lrgb2oklab(toLinear(uCol[0])) : toLinear(uCol[0]);',
+    '  for (int i = 0; i < ' + (MAX - 1) + '; i++) {',
+    '    float fi = float(i);',
+    '    float exists = step(fi + 1.5, uCount);',
+    '    float w = clamp(x - fi, 0.0, 1.0) * exists;',
+    '    vec3 nxt = lab ? lrgb2oklab(toLinear(uCol[i + 1])) : toLinear(uCol[i + 1]);',
+    '    acc = mix(acc, nxt, w);',
+    '  }',
+    '  return lab ? oklab2lrgb(acc) : acc;',
+    '}',
+    '',
+    'float sdfAt(vec2 p){',
+    '  vec4 f = texture2D(uSDF, p);',
+    '  return (f.r + f.g / 255.0 - 0.5) * 4.0;   // unpack 16-bit, ±2 heights',
     '}',
     '',
     'void main(){',
@@ -144,6 +180,19 @@
     '',
     '  vec3 mixed = acc / max(wsum, 1e-5);',
     '  vec3 lin;',
+    '',
+    '  /* Geometry mode: the same warped coordinate p, read against the signed',
+    '     distance field instead of against the colour points. Warp, loop and',
+    '     dither are untouched — only the gradient coordinate changes. */',
+    '  if (uMode > 0.5) {',
+    '    float sd = sdfAt(clamp(p, 0.0, 1.0));',
+    '    float w = max(uSpread, 0.004);',
+    '    float g = uFill > 0.5 ? clamp(-sd / w, 0.0, 1.0)',
+    '                          : clamp(0.5 + sd / (2.0 * w), 0.0, 1.0);',
+    '    gl_FragColor = vec4(dither(toSRGB(rampLin(g))), 1.0);',
+    '    return;',
+    '  }',
+    '',
     '  if(uSpace > 1.5){',
     '    lin = mixed;                                   // already linear light',
     '  } else if(uSpace > 0.5){',
@@ -156,14 +205,7 @@
     '    lin = oklab2lrgb(mixed);',
     '  }',
     '',
-    '  vec3 col = toSRGB(lin);',
-    '',
-    '  /* Grain doubles as dither. Even at Grain = 0 a sub-LSB amount stays in,',
-    '     because 8-bit output without dither WILL band on a smooth gradient. */',
-    '  float g = hash21(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5;',
-    '  col += g * (0.9/255.0 + uGrain * 0.055);',
-    '',
-    '  gl_FragColor = vec4(col, 1.0);',
+    '  gl_FragColor = vec4(dither(toSRGB(lin)), 1.0);',
     '}'
   ].join('\n');
 
@@ -172,6 +214,7 @@
   /* ====================================================================== */
 
   var gl = null, prog = null, U = null, surface = null, failed = false;
+  var sdf = null;                    // built on first use of a geometry mode
   var buf = {
     col:  new Float32Array(MAX * 3),
     home: new Float32Array(MAX * 2),
@@ -219,7 +262,8 @@
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     U = {};
-    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSeed', 'uSpace']
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSeed',
+     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uFill']
       .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
     U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
     U.uHome = gl.getUniformLocation(prog, 'uHome[0]');
@@ -255,6 +299,22 @@
     var r = G.resolve(params);
     var n = Math.min(r.colors.length, MAX);
 
+    /**
+     * Geometry modes: refresh the distance field first, because the SDF passes
+     * take over the framebuffer and the viewport. update() is a string compare
+     * on every frame but the ones where the geometry actually moved.
+     */
+    var geometry = r.mode !== 'mesh' && global.GRADIENT_SDF;
+    if (geometry) {
+      if (!sdf) sdf = global.GRADIENT_SDF.create(gl);
+      if (sdf) {
+        var side = 512;
+        sdf.update(r.geometry, side, Math.max(8, Math.round(side * h / w)));
+      } else {
+        geometry = false;              // no SDF programs — fall back to mesh
+      }
+    }
+
     for (var i = 0; i < MAX; i++) {
       var k = Math.min(i, n - 1);
       var c = G.hexToRgb(r.colors[k]);
@@ -284,6 +344,16 @@
     gl.uniform1f(U.uSep, (r.separation || 0) / 100);
     gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
     gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
+
+    gl.uniform1f(U.uMode, geometry ? 1 : 0);
+    gl.uniform1f(U.uSpread, (r.geometry.spread || 40) / 100);
+    gl.uniform1f(U.uFill, r.geometry.fill ? 1 : 0);
+    if (geometry) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sdf.texture);
+      gl.uniform1i(U.uSDF, 0);
+    }
+
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     var ctx = canvas.getContext('2d');
@@ -361,6 +431,9 @@
     stop: stop,
     stopAll: stopAll,
     /** True once a GL context is up — asking for it is what brings it up. */
-    get accelerated() { return init(); }
+    get accelerated() { return init(); },
+    /** How many times the distance field has been rebuilt this session. */
+    get sdfBuilds() { return sdf ? sdf.builds : 0; },
+    get sdfPasses() { return sdf ? sdf.passes : 0; }
   };
 })(window);

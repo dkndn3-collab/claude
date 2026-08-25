@@ -62,6 +62,9 @@
         '</div>' +
       '</section>' +
 
+      '<div class="modes" id="gfModes" role="tablist" aria-label="Generator"></div>' +
+      '<section class="panel geometry" id="gfGeometry" hidden></section>' +
+
       '<section class="shelf">' +
         '<header class="shelf-head">' +
           '<span class="eyebrow">Library</span>' +
@@ -99,6 +102,8 @@
     el.hero = view.querySelector('#gfHero');
     el.name = view.querySelector('#gfName');
     el.meta = view.querySelector('#gfMeta');
+    el.modes = view.querySelector('#gfModes');
+    el.geometry = view.querySelector('#gfGeometry');
     el.count = view.querySelector('#gfCount');
     el.search = view.querySelector('#gfSearch');
     el.filters = view.querySelector('#gfFilters');
@@ -124,12 +129,44 @@
       renderCards();
     });
 
+    renderModes();
     renderFilters();
     renderCards();
     renderStops();
     renderSliders();
+    renderGeometry();
     renderAdvanced();
     refresh();
+  }
+
+  /* ----------------------------------------------------------------- mode */
+
+  function renderModes() {
+    el.modes.innerHTML = '';
+    G.modes.forEach(function (m) {
+      var b = document.createElement('button');
+      b.className = 'seg' + (state.params.mode === m.id ? ' on' : '');
+      b.textContent = m.name;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(state.params.mode === m.id));
+      b.addEventListener('click', function () {
+        if (state.params.mode === m.id) return;
+        state.params.mode = m.id;
+        // The visible slider set is what changes per mode — not its length.
+        renderModes(); renderSliders(); renderGeometry(); renderAdvanced(); refresh();
+      });
+      el.modes.appendChild(b);
+    });
+  }
+
+  /** Geometry-specific controls, present only while that mode is active. */
+  function renderGeometry() {
+    var fields = G.paramsOf('geometry', state.params.mode);
+    el.geometry.hidden = !fields.length;
+    el.geometry.innerHTML = '';
+    fields.forEach(function (p) {
+      el.geometry.appendChild(C.field(p, state.params, onChange));
+    });
   }
 
   /* --------------------------------------------------------------- library */
@@ -218,7 +255,13 @@
       card.appendChild(name);
 
       card.addEventListener('click', function () {
+        // A preset is a palette and a motion profile; the generator mode is the
+        // user's choice and survives loading one.
+        var mode = state.params.mode;
+        var geom = geometryOf(state.params);
         state.params = G.fromPreset(pr.id);
+        state.params.mode = mode;
+        restoreGeometry(state.params, geom);
         var on = el.cards.querySelector('.card.on');
         if (on) on.classList.remove('on');
         card.classList.add('on');
@@ -228,6 +271,16 @@
       el.cards.appendChild(card);
       if (io) io.observe(card); else paint(card);
     });
+  }
+
+  var GEOM_KEYS = ['shape', 'size', 'spread', 'shapeX', 'shapeY', 'rotate', 'fill'];
+  function geometryOf(p) {
+    var out = {};
+    GEOM_KEYS.forEach(function (k) { out[k] = p[k]; });
+    return out;
+  }
+  function restoreGeometry(p, geom) {
+    GEOM_KEYS.forEach(function (k) { if (geom[k] !== undefined) p[k] = geom[k]; });
   }
 
   /* --------------------------------------------------------------- palette */
@@ -300,14 +353,14 @@
 
   function renderSliders() {
     el.sliders.innerHTML = '';
-    G.paramsOf('main').forEach(function (p) {
+    G.paramsOf('main', state.params.mode).forEach(function (p) {
       el.sliders.appendChild(C.field(p, state.params, onChange));
     });
   }
 
   function renderAdvanced() {
     el.advFields.innerHTML = '';
-    G.paramsOf('advanced').forEach(function (p) {
+    G.paramsOf('advanced', state.params.mode).forEach(function (p) {
       el.advFields.appendChild(C.field(p, state.params, onChange));
     });
 
@@ -339,12 +392,19 @@
     var preset = p.preset ? G.presetById(p.preset) : null;
 
     el.name.textContent = preset ? preset.name : 'Custom';
-    el.meta.textContent = (p.motion ? p.loop + 's loop' : 'still') + ' · ' +
+    el.meta.textContent = (p.mode === 'mesh' ? '' : G.modeById(p.mode).name.toLowerCase() + ' · ') +
+      (p.motion ? p.loop + 's loop' : 'still') + ' · ' +
       p.colors.length + ' colours · ' + p.seed;
 
     var read = G.readability(p.colors);
     el.contrast.textContent = read.note;
     el.contrast.className = 'note' + (read.ok ? '' : ' warn');
+
+    // The After Effects build is the mesh engine. A geometry mode has no native
+    // equivalent yet, so Create says so instead of quietly building a mesh.
+    var native = p.mode === 'mesh';
+    el.create.disabled = !native;
+    el.create.title = native ? '' : 'The After Effects build covers Mesh so far — geometry modes are preview-only.';
 
     PV.stop(el.hero);
     if (p.motion > 0 && !reduceMotion) {
