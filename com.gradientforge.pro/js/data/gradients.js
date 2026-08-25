@@ -1,11 +1,11 @@
 /**
- * gradients.js — the procedural gradient engine (GradientForge MVP, §5).
+ * gradients.js — the gradient engine's data and maths (§5).
  *
  * The hard rule of this feature: **no gradient is ever an asset**. There is no
  * bitmap, no baked preview, no imported .grd — every gradient here is a set of
  * numbers that gets turned into pixels twice: once in the panel (canvas, see
  * gradient-preview.js) and once in After Effects (native effect chain, see
- * jsx/gradient/engine.jsx). Same parameters, same seed, same result.
+ * jsx/engine.jsx). Same parameters, same seed, same result.
  *
  * This file owns the parts that have to agree between those two renderers:
  *   · the parameter schema and the presets (parameters only — zero bytes each)

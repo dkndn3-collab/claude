@@ -1,20 +1,17 @@
 /**
  * app.js — panel controller.
  *
- * Four views (components / motion / gradient / actions). Component tiles play
- * their real entrance animation on hover (§24). Clicking one opens the builder
- * (§25): a live hero preview with a Play button, then Variant · Style ·
- * Content · Animation sections — every value flows to the same ExtendScript
- * call that builds the After Effects composition.
- *
- * The Gradient tab is self-contained in js/gradient.js; app.js only mounts it
- * and tells it when it is on screen.
+ * Three views (components / motion / actions). Component tiles play their real
+ * entrance animation on hover (§24). Clicking one opens the builder (§25): a
+ * live hero preview with a Play button, then Variant · Style · Content ·
+ * Animation sections — every value flows to the same ExtendScript call that
+ * builds the After Effects composition.
  */
 (function () {
   'use strict';
 
   var L = window.LIBRARY, P = window.PREVIEWS, M = window.MOTION, A = window.ANIMATOR, TK = window.TOKENS;
-  var C = window.CONTROLS, GP = window.GRADIENT_PANEL;
+  var C = window.CONTROLS;
 
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -28,7 +25,6 @@
     views: {
       components: document.getElementById('view-components'),
       motion:     document.getElementById('view-motion'),
-      gradient:   document.getElementById('view-gradient'),
       actions:    document.getElementById('view-actions')
     },
     status:    document.getElementById('status'),
@@ -217,8 +213,6 @@
     state.view = name;
     el.tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.view === name)); });
     Object.keys(el.views).forEach(function (k) { el.views[k].hidden = (k !== name); });
-    // The gradient preview is a live render — it only runs while it is visible.
-    if (GP) GP.activate(name === 'gradient');
   }
   el.tabs.forEach(function (t) { t.addEventListener('click', function () { showView(t.dataset.view); }); });
 
@@ -373,7 +367,7 @@
     return s;
   }
 
-  /** Controls come from js/lib/controls.js — the gradient builder shares them. */
+  /** Controls are built by js/lib/controls.js. */
   function fieldFor(p, target, onChange) { return C.field(p, target, onChange); }
 
   function onParamChange(key) {
@@ -490,7 +484,6 @@
     applyHostTheme();
     window.CEP.onThemeChange(applyHostTheme);
     renderAll();
-    if (GP) GP.build(el.views.gradient, setStatus);
     showView('components');
 
     if (window.CEP.isMock) { setStatus('Preview mode — no After Effects host detected'); return; }

@@ -1,44 +1,34 @@
 /**
  * api.jsx — the only function the panel is allowed to call.
  *
- * Everything runs inside one undo group, so a component the user doesn't like
+ * Everything runs inside one undo group, so a gradient the user doesn't like
  * disappears with a single Cmd/Ctrl+Z. Replies are "OK|message" or
  * "ERR|message"; the panel shows the message verbatim in the status bar, so
  * error text is written for the person reading it, not for a log.
  */
 
-$.global.AMUI = $.global.AMUI || {};
+$.global.GF = $.global.GF || {};
 
 (function () {
 
   function ping() {
     var version = String(app.version).split('x')[0];
     var comp = null;
-    try { comp = AMUI.U.activeComp(); } catch (e) {}
+    try { comp = GF.U.activeComp(); } catch (e) {}
     return comp
       ? 'Connected · AE ' + version + ' · ' + comp.name
       : 'Connected · AE ' + version + ' · open a comp to start';
   }
 
-  function create(p) {
-    // Honour the panel's default-font choice for every text layer in this build.
-    if (p.__font) AMUI.font = (AMUI.T.fonts[p.__font] || null);
-    var type = p.__type;
-    var generator = AMUI.Components[type];
-    if (!generator) throw new Error('No generator for “' + type + '”.');
-    return generator.create(p);
-  }
-
   function dispatch(action, p) {
     switch (action) {
-      case 'create': return create(p);
-      case 'motion': return AMUI.Motion.apply(p.preset, p);
-      case 'action': return AMUI.Actions.run(p.id);
+      case 'gradient': return GF.Gradient.create(p);
+      case 'freeze':   return GF.Gradient.freeze();
       default: throw new Error('Unknown action: ' + action);
     }
   }
 
-  AMUI.api = function (action, paramsJson) {
+  GF.api = function (action, paramsJson) {
     try {
       if (action === 'ping') return 'OK|' + ping();
 
@@ -51,9 +41,9 @@ $.global.AMUI = $.global.AMUI || {};
         }
       }
 
-      var label = action === 'create'
-        ? 'Apple Motion UI — create ' + (params.__type || 'component')
-        : 'Apple Motion UI — ' + action;
+      var label = action === 'gradient'
+        ? 'GradientForge — ' + (params.label || 'gradient')
+        : 'GradientForge — ' + action;
 
       var result;
       app.beginUndoGroup(label);

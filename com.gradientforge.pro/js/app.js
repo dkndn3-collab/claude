@@ -1,11 +1,12 @@
 /**
- * gradient.js — the Gradient tab (§7).
+ * app.js — the panel (§7).
  *
  * A live preview at the top, presets under it, then the parameter set. Every
  * change re-renders the canvas immediately; Create sends the resolved payload
- * to jsx/gradient/engine.jsx, which assembles the native effect chain.
+ * to jsx/engine.jsx, which assembles the native effect chain in After Effects.
  *
- * The tab owns its own state, so nothing here touches the component builder.
+ * The preview is a real render of the same maths, not a picture of one — see
+ * js/data/gradient-preview.js.
  */
 (function (global) {
   'use strict';
@@ -13,15 +14,40 @@
   var G = global.GRADIENTS, PV = global.GRADIENT_PREVIEW, C = global.CONTROLS;
 
   var el = {};
-  var state = { params: G.fromPreset('aurora'), harmony: 'analogous', output: { precomp: true, name: '' } };
-  var setStatus = function () {};
+  var state = {
+    params: G.fromPreset('aurora'),
+    harmony: 'analogous',
+    output: { precomp: true, name: '' }
+  };
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
+  /* --------------------------------------------------------------- status */
+
+  var statusTimer = null;
+  function setStatus(msg, state_) {
+    clearTimeout(statusTimer);
+    el.statusMsg.textContent = msg;
+    el.status.setAttribute('data-state', state_ || 'idle');
+    if (state_ === 'ok' || state_ === 'err') {
+      statusTimer = setTimeout(function () {
+        el.statusMsg.textContent = 'Ready';
+        el.status.setAttribute('data-state', 'idle');
+      }, 5000);
+    }
+  }
+
+  /* ---------------------------------------------------------------- theme */
+
+  function applyHostTheme() {
+    var luma = global.CEP.hostBackgroundLuma();
+    if (luma == null) return;
+    document.documentElement.setAttribute('data-theme', luma > 0.5 ? 'light' : 'dark');
+  }
+
   /* ----------------------------------------------------------------- view */
 
-  function build(view, statusFn) {
-    setStatus = statusFn;
+  function build(view) {
     view.innerHTML = '' +
       '<div class="gf-hero-wrap">' +
         '<canvas class="gf-hero" id="gfHero" data-q="hi"></canvas>' +
@@ -263,12 +289,25 @@
       .catch(function (err) { setStatus(err.message || 'Could not freeze the layer', 'err'); });
   }
 
-  /* ------------------------------------------------------------ lifecycle */
+  /* ------------------------------------------------------------------ boot */
 
-  function activate(on) {
-    if (on) refresh();
-    else PV.stop(el.hero);
+  function boot() {
+    el.status = document.getElementById('status');
+    el.statusMsg = document.getElementById('statusMsg');
+
+    applyHostTheme();
+    global.CEP.onThemeChange(applyHostTheme);
+    build(document.getElementById('view'));
+
+    // The preview is a live render; pause it when the panel is not on screen.
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) PV.stopAll(); else refresh();
+    });
+
+    if (global.CEP.isMock) { setStatus('Preview mode — no After Effects host detected'); return; }
+    global.CEP.call('ping', {})
+      .then(function (msg) { setStatus(msg || 'Connected', 'ok'); })
+      .catch(function (err) { setStatus(err.message, 'err'); });
   }
-
-  global.GRADIENT_PANEL = { build: build, activate: activate };
+  boot();
 })(window);

@@ -1,5 +1,5 @@
 /**
- * engine.jsx — builds a procedural gradient out of native After Effects parts.
+ * engine.jsx — builds the gradient out of native After Effects parts.
  *
  * No footage, no imported file, no baked frame: a few solids, a stack of stock
  * effects, and expressions that tie every parameter back to one controller.
@@ -29,10 +29,10 @@
  *    parameter rather than the whole build.
  */
 
-$.global.AMUI = $.global.AMUI || {};
+$.global.GF = $.global.GF || {};
 
-AMUI.Gradient = (function () {
-  var U = AMUI.U;
+GF.Gradient = (function () {
+  var U = GF.U;
 
   /* ====================================================================== */
   /* Defensive property access                                              */

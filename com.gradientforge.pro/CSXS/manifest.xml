@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="9.0"
-                   ExtensionBundleId="com.applemotionui.panel"
-                   ExtensionBundleVersion="0.2.1"
-                   ExtensionBundleName="Apple Motion UI"
+                   ExtensionBundleId="com.gradientforge.panel"
+                   ExtensionBundleVersion="0.1.0"
+                   ExtensionBundleName="GradientForge"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="com.applemotionui.panel.main" Version="0.2.1"/>
+    <Extension Id="com.gradientforge.panel.main" Version="0.1.0"/>
   </ExtensionList>
 
   <ExecutionEnvironment>
@@ -22,7 +22,7 @@
   </ExecutionEnvironment>
 
   <DispatchInfoList>
-    <Extension Id="com.applemotionui.panel.main">
+    <Extension Id="com.gradientforge.panel.main">
       <DispatchInfo>
         <Resources>
           <MainPath>./index.html</MainPath>
@@ -37,15 +37,15 @@
         </Lifecycle>
         <UI>
           <Type>Panel</Type>
-          <Menu>Apple Motion UI</Menu>
+          <Menu>GradientForge</Menu>
           <Geometry>
             <Size>
-              <Height>640</Height>
-              <Width>360</Width>
+              <Height>720</Height>
+              <Width>340</Width>
             </Size>
             <MinSize>
               <Height>420</Height>
-              <Width>300</Width>
+              <Width>280</Width>
             </MinSize>
             <MaxSize>
               <Height>2400</Height>
