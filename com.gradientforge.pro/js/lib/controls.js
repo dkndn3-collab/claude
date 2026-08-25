@@ -5,7 +5,9 @@
  * `{ key, label, type, min, max, step, unit, options, placeholder }`. The
  * control writes straight back into `target[key]`, then calls `onChange(key)`.
  *
- * Types: number (slider + numeric field), bool (switch), select, color, text.
+ * Types: number (thin track + floating value), bool (switch), select, color,
+ * text. A number field also carries its filled fraction as `--fill`, which is
+ * what draws the played part of the track — no second element, no JS on paint.
  */
 (function (global) {
   'use strict';
@@ -16,18 +18,27 @@
     el.dataset.key = p.key;
 
     var label = document.createElement('label');
-    label.textContent = p.label + (p.unit ? ' (' + p.unit + ')' : '');
+    label.textContent = p.label;
     label.setAttribute('for', 'f_' + p.key);
     el.appendChild(label);
 
     var control = document.createElement('div');
     control.className = 'control';
-    control.appendChild(makeControl(p, target, onChange));
+    control.appendChild(makeControl(p, target, onChange, el));
     el.appendChild(control);
+
+    if (p.type === 'number') fill(el, p, target[p.key]);
     return el;
   }
 
-  function makeControl(p, target, onChange) {
+  /** The filled fraction of a slider track, as a percentage. */
+  function fill(fieldEl, p, value) {
+    var span = (p.max - p.min) || 1;
+    var pct = ((Number(value) - p.min) / span) * 100;
+    fieldEl.style.setProperty('--fill', Math.max(0, Math.min(100, pct)) + '%');
+  }
+
+  function makeControl(p, target, onChange, fieldEl) {
     var frag = document.createDocumentFragment();
     var fire = onChange || function () {};
 
@@ -36,15 +47,22 @@
       range.type = 'range';
       range.min = p.min; range.max = p.max; range.step = p.step || 1;
       range.value = target[p.key];
+      range.setAttribute('aria-label', p.label);
+
       var num = document.createElement('input');
       num.type = 'number';
       num.id = 'f_' + p.key;
+      num.className = 'val';
       num.min = p.min; num.max = p.max; num.step = p.step || 1;
       num.value = target[p.key];
+
       var commit = function (v) {
         v = Math.max(p.min, Math.min(p.max, Number(v)));
         if (isNaN(v)) v = p.min;
-        target[p.key] = v; range.value = v; num.value = v; fire(p.key);
+        target[p.key] = v;
+        range.value = v; num.value = v;
+        if (fieldEl) fill(fieldEl, p, v);
+        fire(p.key);
       };
       range.addEventListener('input', function () { commit(range.value); });
       num.addEventListener('change', function () { commit(num.value); });
@@ -55,6 +73,7 @@
       sw.type = 'button'; sw.className = 'switch'; sw.id = 'f_' + p.key;
       sw.setAttribute('role', 'switch');
       sw.setAttribute('aria-checked', String(!!target[p.key]));
+      sw.setAttribute('aria-label', p.label);
       sw.addEventListener('click', function () {
         target[p.key] = !target[p.key];
         sw.setAttribute('aria-checked', String(target[p.key]));
@@ -76,7 +95,7 @@
 
     } else if (p.type === 'color') {
       var col = document.createElement('input');
-      col.type = 'color'; col.id = 'f_' + p.key; col.className = 'swatch';
+      col.type = 'color'; col.id = 'f_' + p.key; col.className = 'chip';
       col.value = target[p.key];
       col.addEventListener('input', function () { target[p.key] = col.value; fire(p.key); });
       frag.appendChild(col);
@@ -99,7 +118,10 @@
     var num = f.querySelector('input[type=number]');
     var sel = f.querySelector('select');
     var col = f.querySelector('input[type=color]');
-    if (range) range.value = value;
+    if (range) {
+      range.value = value;
+      fill(f, { min: Number(range.min), max: Number(range.max) }, value);
+    }
     if (num) num.value = value;
     if (sel) sel.value = value;
     if (col) col.value = value;

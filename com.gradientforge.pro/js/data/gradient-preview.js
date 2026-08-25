@@ -40,6 +40,7 @@
     'uniform float uBlend;      // 0..1  defined <-> soft',
     'uniform float uFlow;       // 0..1  domain warp',
     'uniform float uGrain;      // 0..1',
+    'uniform float uSep;        // 0..1  soft field <-> distinct masses',
     'uniform float uSeed;',
     'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
     '',
@@ -110,7 +111,10 @@
     '',
     '  /* Gaussian-weighted blend of the colour points. C-infinity smooth, so',
     '     there is no seam and no banding structure to begin with. */',
-    '  float sharp = mix(26.0, 3.2, uBlend);',
+    '  /* Separation tightens every point and thins the tail, so the colours',
+    '     read as distinct masses instead of one continuous field. */',
+    '  float sharp = mix(26.0, 3.2, uBlend) * (1.0 + uSep * 1.8);',
+    '  float tail  = 0.34 * (1.0 - 0.9 * uSep);',
     '  vec3 acc = vec3(0.0);',
     '  float wsum = 0.0;',
     '  float chroma = 0.0;',
@@ -129,7 +133,7 @@
     '       underflows far from every point, and where that happens the blend',
     '       snaps between whichever floor wins — a visible crease. The tail',
     '       never reaches zero, so distant areas fade into each other. */',
-    '    float wt = (exp(-q) + 0.32 / (1.0 + q * q * 4.0)) * active;',
+    '    float wt = (exp(-q) + tail / (1.0 + q * q * 4.0)) * active;',
     '',
     '    vec3 lab = lrgb2oklab(toLinear(uCol[i]));',
     '    if(uSpace > 1.5) lab = toLinear(uCol[i]);      // linear sRGB blend',
@@ -215,7 +219,7 @@
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     U = {};
-    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSeed', 'uSpace']
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSeed', 'uSpace']
       .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
     U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
     U.uHome = gl.getUniformLocation(prog, 'uHome[0]');
@@ -277,6 +281,7 @@
     gl.uniform1f(U.uBlend, r.blend / 100);
     gl.uniform1f(U.uFlow, r.flow / 100);
     gl.uniform1f(U.uGrain, r.grain / 100);
+    gl.uniform1f(U.uSep, (r.separation || 0) / 100);
     gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
     gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

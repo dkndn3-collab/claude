@@ -244,6 +244,7 @@
     { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1, group: 'main',
       blurb: 'texture, and the dither that kills banding' },
 
+    { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1, group: 'advanced' },
     { key: 'loop',       label: 'Loop', type: 'number', value: 12, min: 2, max: 60, step: 1, unit: 's', group: 'advanced' },
     { key: 'seed',       label: 'Seed',        type: 'number', value: 431, min: 1, max: 9999, step: 1, group: 'advanced' },
     { key: 'colorSpace', label: 'Space', type: 'select', value: 'oklab', options: SPACE_OPTS, group: 'advanced' },
@@ -254,20 +255,48 @@
   /* Presets — parameter sets, not assets. Each one costs zero bytes.       */
   /* ====================================================================== */
 
-  var PRESETS = [
-    { id: 'aurora', name: 'Aurora', colors: ['#0b2a4a', '#1f7a8c', '#5ee6c0', '#0b2a4a'],
-      set: { motion: 34, blend: 62, flow: 28, grain: 18, seed: 431 } },
-    { id: 'silk',   name: 'Silk',   colors: ['#f3e2d4', '#e0b8a0', '#c78a7a'],
-      set: { motion: 16, blend: 78, flow: 14, grain: 26, seed: 1187 } },
-    { id: 'petrol', name: 'Petrol', colors: ['#05070d', '#122a4d', '#2f6fb5', '#7fd4ff'],
-      set: { motion: 42, blend: 52, flow: 40, grain: 14, seed: 2042 } },
-    { id: 'ember',  name: 'Ember',  colors: ['#1a0806', '#7a1f14', '#e0602a', '#f2b544'],
-      set: { motion: 28, blend: 58, flow: 34, grain: 20, seed: 3316 } },
-    { id: 'fog',    name: 'Fog',    colors: ['#c9ccd1', '#9aa0a8', '#6e747c', '#dfe2e6'],
-      set: { motion: 12, blend: 84, flow: 10, grain: 34, seed: 655 } },
-    { id: 'ultra',  name: 'Ultra',  colors: ['#12002e', '#5b0fa8', '#c72bd6', '#ff9ae0'],
-      set: { motion: 38, blend: 56, flow: 32, grain: 16, seed: 4820 } }
+  var SIGNATURE = [
+    { id: 'aurora', name: 'Aurora', tags: 'signature blue teal cinematic calm',
+      colors: ['#0b2a4a', '#1f7a8c', '#5ee6c0', '#0b2a4a'],
+      set: { motion: 34, blend: 62, flow: 28, separation: 30, grain: 18, seed: 431 } },
+    { id: 'silk',   name: 'Silk',   tags: 'signature beige soft warm minimal',
+      colors: ['#f3e2d4', '#e0b8a0', '#c78a7a'],
+      set: { motion: 16, blend: 78, flow: 14, separation: 18, grain: 26, seed: 1187 } },
+    { id: 'petrol', name: 'Petrol', tags: 'signature dark blue cold premium',
+      colors: ['#05070d', '#122a4d', '#2f6fb5', '#7fd4ff'],
+      set: { motion: 42, blend: 52, flow: 40, separation: 45, grain: 14, seed: 2042 } },
+    { id: 'ember',  name: 'Ember',  tags: 'signature warm fire orange dark',
+      colors: ['#1a0806', '#7a1f14', '#e0602a', '#f2b544'],
+      set: { motion: 28, blend: 58, flow: 34, separation: 38, grain: 20, seed: 3316 } },
+    { id: 'fog',    name: 'Fog',    tags: 'signature gray minimal muted soft',
+      colors: ['#c9ccd1', '#9aa0a8', '#6e747c', '#dfe2e6'],
+      set: { motion: 12, blend: 84, flow: 10, separation: 12, grain: 34, seed: 655 } },
+    { id: 'ultra',  name: 'Ultra',  tags: 'signature purple magenta neon bright',
+      colors: ['#12002e', '#5b0fa8', '#c72bd6', '#ff9ae0'],
+      set: { motion: 38, blend: 56, flow: 32, separation: 52, grain: 16, seed: 4820 } }
   ];
+
+  // The database (js/data/library.js) sits behind the six signature sets. It is
+  // 408 more palettes and motion profiles — still numbers, still zero assets.
+  var LIB = global.LIBRARY || { presets: [], filters: [] };
+  var PRESETS = SIGNATURE.concat(LIB.presets);
+
+  var FILTERS = [{ id: 'all', name: 'All' }, { id: 'signature', name: 'Signature' }]
+    .concat((LIB.filters || []).map(function (f) {
+      return { id: f, name: f.charAt(0).toUpperCase() + f.slice(1) };
+    }));
+
+  /** Free-text over name and tags, plus the active filter chip. */
+  function search(query, filter) {
+    var words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    return PRESETS.filter(function (pr) {
+      if (filter && filter !== 'all' && (pr.tags || '').indexOf(filter) === -1) return false;
+      if (!words.length) return true;
+      var hay = (pr.name + ' ' + (pr.tags || '')).toLowerCase();
+      for (var i = 0; i < words.length; i++) if (hay.indexOf(words[i]) === -1) return false;
+      return true;
+    });
+  }
 
   /* ====================================================================== */
   /* Helpers                                                                */
@@ -278,7 +307,7 @@
   function defaults() {
     var out = {};
     PARAMS.forEach(function (p) { out[p.key] = p.value; });
-    out.colors = PRESETS[0].colors.slice();
+    out.colors = SIGNATURE[0].colors.slice();
     out.preset = null;
     return out;
   }
@@ -342,6 +371,7 @@
       motion: p.motion,
       blend: p.blend,
       flow: p.flow,
+      separation: p.separation,
       grain: p.grain,
       loop: p.loop,
       seed: p.seed,
@@ -370,6 +400,10 @@
     maxColors: MAX_COLORS,
     params: PARAMS,
     presets: PRESETS,
+    signature: SIGNATURE,
+    filters: FILTERS,
+    search: search,
+    profiles: LIB.profiles || {},
     harmonies: HARMONIES,
     spaces: SPACE_OPTS,
     defaults: defaults,

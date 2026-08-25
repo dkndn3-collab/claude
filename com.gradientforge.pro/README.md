@@ -1,4 +1,4 @@
-# GradientForge — v0.2.0
+# GradientForge — v0.3.0
 
 A dockable After Effects panel that generates gradient backgrounds — animated or
 still — with one hard rule: **no gradient is ever an asset**.
@@ -54,7 +54,12 @@ from the same engine, and turning Motion up can never break the loop.
 
 ## The panel
 
-Four sliders, and that is the whole surface (§7):
+The canvas is the subject: a large, softly rounded surface with almost no chrome
+on it, carrying only the preset name and a line of context. Everything else is
+thin glass around it — low-opacity sheets, single hairlines, restrained blur and
+a little ambient light rather than shadow.
+
+Four sliders, and that is the whole surface:
 
 | | |
 |---|---|
@@ -63,18 +68,55 @@ Four sliders, and that is the whole surface (§7):
 | **Flow** | how much the shape bends and drifts |
 | **Grain** | texture, and the dither that kills banding |
 
-Above them: six presets that each redraw themselves when the panel opens, and a
-palette of 2–5 swatches with **Shuffle** for a new seed and a fresh, harmonious
-palette. Under **Advanced**: loop length, seed, blend space, linear blending,
-precomp on/off, name, and Export still frame. **Copy settings** puts the whole
-parameter set on the clipboard as JSON.
+Under them: a palette of 2–5 colour chips with **Shuffle**, and a persistent
+action bar. Under **Advanced**: separation, loop length, seed, blend space,
+linear blending, precomp on/off, name, and Export still frame. **Copy settings**
+puts the parameter set on the clipboard as JSON.
 
-Nothing on the slider labels is a technical term — there is a Flow slider, not a
+Nothing on a slider label is a technical term — there is a Flow slider, not a
 noise-frequency slider.
 
-The chrome is achromatic on purpose. The gradient is the only saturated thing on
-screen, because a coloured interface shifts the colour judgement this panel
-exists to support.
+The chrome is achromatic and stays that way, including the ambient light. The
+gradient is the only saturated thing on screen, because a coloured interface
+shifts the colour judgement this panel exists to support.
+
+---
+
+## The library
+
+408 palettes from the grading database, plus the six signature sets — 414 in
+all. Search by name, mood or tag; filter by the chips; click a card to load it.
+
+**They are still not assets.** A preset here is a name, a palette and a motion
+profile: numbers and hex strings, about 46 KB for the whole library. Every card
+in the shelf is *rendered* by the same engine the moment it scrolls into view —
+there is no thumbnail anywhere in the extension. Tiles paint a few per frame, so
+the shelf keeps scrolling while they arrive, and each one is drawn once.
+
+The database's ten **motion profiles** are its vocabulary for movement, and each
+resolves to this panel's own controls:
+
+| Profile | Motion · Blend · Flow · Separation |
+|---|---|
+| `still_minimal` | 3 · 95 · 5 · 5 |
+| `soft_dreamy` | 8 · 95 · 20 · 10 |
+| `cinematic_slow` | 15 · 85 · 25 · 30 |
+| `slow_organic` | 20 · 85 · 35 · 25 |
+| `slow_separated` | 18 · 55 · 25 · 65 |
+| `medium_flow` | 50 · 70 · 60 · 40 |
+| `fast_flow` | 75 · 65 · 80 · 35 |
+| `fast_energetic` | 85 · 55 · 85 · 55 |
+| `fast_separated` | 90 · 40 · 85 · 80 |
+| `neon_active` | 75 · 45 · 85 · 75 |
+
+The loop length follows the speed — a slow move wants a long cycle — and the
+seed comes from the row id, so a preset looks the same every time it is opened.
+
+**Separation** arrived with the database and is a real engine parameter, not a
+label: it tightens every colour point and thins the weighting tail, so the
+palette reads as distinct masses rather than one continuous field. It is the
+Metaball end of the same engine. It sits under Advanced, because the surface
+keeps its four sliders.
 
 ---
 
@@ -102,7 +144,8 @@ turned it on.
 ## What actually gets built
 
 ```
-GF CONTROLLER   Motion · Blend · Flow · Grain · Loop · Seed + every colour
+GF CONTROLLER   Motion · Blend · Flow · Grain · Separation · Loop · Seed
+                + every colour
 Grain           adjustment layer · Noise, never below one LSB of dither
 Flow            adjustment layer · Turbulent Displace, low frequency
 Colour n…1      one soft colour point each: ellipse + Fast Box Blur,
@@ -189,6 +232,7 @@ css/panel.css             achromatic chrome, presets, palette, sliders
 js/
   lib/cep-bridge.js       evalScript / theme / host info
   lib/controls.js         one labelled control per parameter definition
+  data/library.js         ← the 408-palette database and its motion profiles
   data/gradients.js       ← colour spaces, seeded RNG, presets, resolve()
   data/gradient-preview.js  the mesh engine as a fragment shader
   app.js                  the panel
@@ -221,6 +265,12 @@ achromatic panel with Advanced collapsed, Copy settings, Export still frame
 (§7) ✓ editable native output — the "Convert to Editable Layers" promise,
 except the output was never anything else (§4). Option B, as §6 recommends.
 
+One deliberate departure: §2 ruled a preset library out of scope, on the
+grounds that a library means shipping assets. The grading database is not that
+— its rows are palettes and motion profiles, so the zero-asset rule (§1) is
+untouched and the tiles are all live renders. The reason for the exclusion does
+not apply, so the library is in.
+
 ### Honest limits
 
 - **Not yet tested inside After Effects.** The panel is verified in a real
@@ -245,3 +295,6 @@ except the output was never anything else (§4). Option B, as §6 recommends.
 - **`.zxp` signing** needs an Adobe code-signing certificate; `build-zxp.sh`
   wraps `ZXPSignCmd` once you have one.
 - **Windows untested.** No Mac-only paths, but it has not been run there.
+- **`backdrop-filter` needs a recent CEF.** On an older CEP runtime the glass
+  sheets fall back to their flat translucent fill, which is what the design
+  rests on anyway — nothing disappears.

@@ -133,6 +133,7 @@ GF.Gradient = (function () {
     U.slider(ctrl, 'Blend', p.blend);
     U.slider(ctrl, 'Flow', p.flow);
     U.slider(ctrl, 'Grain', p.grain);
+    U.slider(ctrl, 'Separation', p.separation == null ? 40 : p.separation);
     U.slider(ctrl, 'Loop', p.loop);
     U.slider(ctrl, 'Seed', p.seed);
     for (var c = 0; c < colors.length; c++) U.colorControl(ctrl, 'Color ' + (c + 1), colors[c]);
@@ -145,10 +146,12 @@ GF.Gradient = (function () {
     }
 
     /**
-     * The Gaussian's width, in pixels, from the Blend slider — the same
-     * sigma the preview's `sharp = mix(26, 3.2, blend)` works out to.
+     * The Gaussian's width in pixels, from Blend — the same sigma the
+     * preview's `sharp = mix(26, 3.2, blend)` works out to. Separation tightens
+     * every point, exactly as it tightens the preview's weighting.
      */
-    var SIGMA = 'thisComp.height * (0.139 + 0.256 * ' + R('Blend') + '/100)';
+    var SIGMA = 'thisComp.height * (0.139 + 0.256 * ' + R('Blend') + '/100)' +
+                ' * (1 - 0.45 * ' + R('Separation') + '/100)';
 
     /* ---- base — the first colour, under everything ---------------------- */
 

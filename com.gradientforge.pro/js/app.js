@@ -1,14 +1,13 @@
 /**
- * app.js — the panel (§7).
+ * app.js — the panel.
  *
- * The layout follows one rule from the spec: **at most four sliders on the
- * surface.** Everything else is a preset, a button, or lives under Advanced.
- * Preset first, slider second — nobody should have to find a good gradient by
- * turning knobs from zero.
+ * Two rules shape the layout. From the spec: at most four sliders on the
+ * surface, preset first, and chrome that carries no colour of its own. From the
+ * material: the gradient is the subject, so it gets the largest, quietest
+ * surface on screen and everything else recedes into thin glass around it.
  *
- * The chrome is deliberately achromatic. The gradient is the only colour on
- * screen, because a coloured interface would bias the colour judgement this
- * panel exists to support.
+ * The library shelf holds 400+ palettes. Its tiles are rendered, never stored —
+ * each one draws itself the first time it scrolls into view and then stays.
  */
 (function (global) {
   'use strict';
@@ -19,6 +18,8 @@
   var state = {
     params: G.fromPreset('aurora'),
     harmony: 'analogous',
+    filter: 'all',
+    query: '',
     output: { precomp: true, name: '' }
   };
   var reduceMotion = false;
@@ -52,35 +53,43 @@
 
   function build(view) {
     view.innerHTML = '' +
-      '<div class="gf-hero-wrap">' +
-        '<canvas class="gf-hero" id="gfHero"></canvas>' +
-        '<div class="gf-hero-bar"><span class="gf-badge" id="gfBadge"></span></div>' +
-      '</div>' +
-
-      '<div class="gf-presets" id="gfPresets"></div>' +
-
-      '<div class="gf-palette">' +
-        '<div class="gf-stops" id="gfStops"></div>' +
-        '<button class="btn" id="gfShuffle" title="New seed and a fresh palette">Shuffle</button>' +
-      '</div>' +
-      '<p class="bnote" id="gfContrast"></p>' +
-
-      '<div class="gf-sliders" id="gfSliders"></div>' +
-
-      '<div class="gf-actions">' +
-        '<button class="btn" id="gfCopy" title="Copy the parameters as JSON">Copy settings</button>' +
-        '<button class="btn primary" id="gfCreate">Create gradient</button>' +
-      '</div>' +
-
-      '<details class="gf-adv" id="gfAdv">' +
-        '<summary>Advanced</summary>' +
-        '<div id="gfAdvFields"></div>' +
-        '<div id="gfOutput"></div>' +
-        '<div class="gf-actions gf-actions-sub">' +
-          '<button class="btn" id="gfFreeze" title="Freeze the selected gradient layer at the playhead">Export still frame</button>' +
+      '<section class="stage">' +
+        '<canvas class="canvas" id="gfHero"></canvas>' +
+        '<div class="stage-ring" aria-hidden="true"></div>' +
+        '<div class="stage-info">' +
+          '<span class="stage-name" id="gfName"></span>' +
+          '<span class="stage-meta" id="gfMeta"></span>' +
         '</div>' +
-        '<p class="bnote" id="gfEngine"></p>' +
-        '<p class="bnote">Space picks how the preview takes its weighted mean. ' +
+      '</section>' +
+
+      '<section class="shelf">' +
+        '<header class="shelf-head">' +
+          '<span class="eyebrow">Library</span>' +
+          '<span class="count" id="gfCount"></span>' +
+        '</header>' +
+        '<input class="search" id="gfSearch" type="text" spellcheck="false" autocomplete="off" ' +
+               'placeholder="Search palettes">' +
+        '<div class="chips" id="gfFilters"></div>' +
+        '<div class="cards" id="gfCards"></div>' +
+      '</section>' +
+
+      '<section class="panel palette">' +
+        '<div class="chips-row" id="gfStops"></div>' +
+        '<button class="ghost" id="gfShuffle" title="New seed and a fresh palette">Shuffle</button>' +
+      '</section>' +
+      '<p class="note" id="gfContrast"></p>' +
+
+      '<section class="panel controls" id="gfSliders"></section>' +
+
+      '<details class="adv" id="gfAdv">' +
+        '<summary><span class="eyebrow">Advanced</span></summary>' +
+        '<div class="panel" id="gfAdvFields"></div>' +
+        '<div class="panel" id="gfOutput"></div>' +
+        '<div class="actions actions-sub">' +
+          '<button class="ghost" id="gfFreeze" title="Freeze the selected gradient layer at the playhead">Export still frame</button>' +
+        '</div>' +
+        '<p class="note" id="gfEngine"></p>' +
+        '<p class="note">Space picks how the preview takes its weighted mean. ' +
         'After Effects has no effect that composites in OKLab, so the build gets ' +
         'the exact colour points and — with Linear on — linear-light compositing, ' +
         'which is the part that keeps blue↔orange out of the mud.</p>' +
@@ -88,65 +97,146 @@
 
     el.view = view;
     el.hero = view.querySelector('#gfHero');
-    el.badge = view.querySelector('#gfBadge');
-    el.presets = view.querySelector('#gfPresets');
+    el.name = view.querySelector('#gfName');
+    el.meta = view.querySelector('#gfMeta');
+    el.count = view.querySelector('#gfCount');
+    el.search = view.querySelector('#gfSearch');
+    el.filters = view.querySelector('#gfFilters');
+    el.cards = view.querySelector('#gfCards');
     el.stops = view.querySelector('#gfStops');
     el.contrast = view.querySelector('#gfContrast');
     el.sliders = view.querySelector('#gfSliders');
     el.advFields = view.querySelector('#gfAdvFields');
     el.output = view.querySelector('#gfOutput');
     el.engine = view.querySelector('#gfEngine');
-    el.create = view.querySelector('#gfCreate');
     el.freeze = view.querySelector('#gfFreeze');
-    el.copy = view.querySelector('#gfCopy');
+    // The action bar lives outside the scroller, so it never scrolls away.
+    el.create = document.getElementById('gfCreate');
+    el.copy = document.getElementById('gfCopy');
     el.shuffle = view.querySelector('#gfShuffle');
 
     el.shuffle.addEventListener('click', shuffle);
     el.create.addEventListener('click', create);
     el.freeze.addEventListener('click', freeze);
     el.copy.addEventListener('click', copySettings);
+    el.search.addEventListener('input', function () {
+      state.query = el.search.value;
+      renderCards();
+    });
 
-    renderPresets();
+    renderFilters();
+    renderCards();
     renderStops();
     renderSliders();
     renderAdvanced();
     refresh();
   }
 
-  /* -------------------------------------------------------------- presets */
+  /* --------------------------------------------------------------- library */
 
-  function renderPresets() {
-    el.presets.innerHTML = '';
-    G.presets.forEach(function (pr) {
+  function renderFilters() {
+    el.filters.innerHTML = '';
+    G.filters.forEach(function (f) {
       var b = document.createElement('button');
-      b.className = 'gf-preset' + (state.params.preset === pr.id ? ' on' : '');
-      b.title = pr.name;
-      var cv = document.createElement('canvas');
-      cv.className = 'gf-preset-art';
-      b.appendChild(cv);
-      var name = document.createElement('span');
-      name.className = 'gf-preset-name';
-      name.textContent = pr.name;
-      b.appendChild(name);
+      b.className = 'chip' + (state.filter === f.id ? ' on' : '');
+      b.textContent = f.name;
       b.addEventListener('click', function () {
-        state.params = G.fromPreset(pr.id);
-        renderPresets(); renderStops(); syncControls(); refresh();
+        state.filter = f.id;
+        renderFilters();
+        renderCards();
+        el.cards.scrollTop = 0;
       });
-      el.presets.appendChild(b);
-      // Each tile draws its own first frame — a rendering, never a thumbnail.
-      requestAnimationFrame(function () {
-        try { PV.render(cv, G.fromPreset(pr.id), 0); } catch (e) {}
-      });
+      el.filters.appendChild(b);
     });
   }
 
-  /* ------------------------------------------------------------- palette */
+  /**
+   * Tiles draw themselves when they scroll into view — 400+ canvases rendered
+   * up front would stall the panel, and most of them are never looked at.
+   */
+  var watcher = null;
+  function observer() {
+    if (watcher || typeof IntersectionObserver === 'undefined') return watcher;
+    watcher = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        watcher.unobserve(entry.target);
+        paint(entry.target);
+      });
+    }, { root: el.cards, rootMargin: '160px 0px' });
+    return watcher;
+  }
+
+  var queue = [];
+  var painting = false;
+  function paint(card) {
+    queue.push(card);
+    if (painting) return;
+    painting = true;
+    requestAnimationFrame(function step() {
+      // A few per frame: the shelf keeps scrolling while the tiles arrive.
+      for (var n = 0; n < 3 && queue.length; n++) {
+        var card = queue.shift();
+        var pr = G.presetById(card.dataset.preset);
+        if (!pr || card.__painted) continue;
+        card.__painted = true;
+        var cv = document.createElement('canvas');
+        cv.className = 'card-art';
+        card.insertBefore(cv, card.firstChild);
+        try { PV.render(cv, G.fromPreset(pr.id), 0); } catch (e) {}
+      }
+      if (queue.length) requestAnimationFrame(step);
+      else painting = false;
+    });
+  }
+
+  function renderCards() {
+    var list = G.search(state.query, state.filter);
+    el.count.textContent = list.length;
+    el.cards.innerHTML = '';
+    queue.length = 0;
+    watcher = null;
+
+    if (!list.length) {
+      var empty = document.createElement('p');
+      empty.className = 'note empty';
+      empty.textContent = 'Nothing matches “' + state.query + '”.';
+      el.cards.appendChild(empty);
+      return;
+    }
+
+    var io = observer();
+    list.forEach(function (pr) {
+      var card = document.createElement('button');
+      card.className = 'card' + (state.params.preset === pr.id ? ' on' : '');
+      card.dataset.preset = pr.id;
+      card.title = pr.name;
+
+      var name = document.createElement('span');
+      name.className = 'card-name';
+      name.textContent = pr.name;
+      card.appendChild(name);
+
+      card.addEventListener('click', function () {
+        state.params = G.fromPreset(pr.id);
+        var on = el.cards.querySelector('.card.on');
+        if (on) on.classList.remove('on');
+        card.classList.add('on');
+        renderStops(); syncControls(); refresh();
+      });
+
+      el.cards.appendChild(card);
+      if (io) io.observe(card); else paint(card);
+    });
+  }
+
+  /* --------------------------------------------------------------- palette */
 
   function renderStops() {
     el.stops.innerHTML = '';
     state.params.colors.forEach(function (hex, i) {
-      var wrap = document.createElement('div');
-      wrap.className = 'gf-stop';
+      var wrap = document.createElement('span');
+      wrap.className = 'swatch';
 
       var input = document.createElement('input');
       input.type = 'color';
@@ -162,7 +252,7 @@
 
       if (state.params.colors.length > 2) {
         var rm = document.createElement('button');
-        rm.className = 'gf-stop-rm';
+        rm.className = 'swatch-rm';
         rm.textContent = '×';
         rm.title = 'Remove colour';
         rm.addEventListener('click', function (ev) {
@@ -177,7 +267,7 @@
 
     if (state.params.colors.length < G.maxColors) {
       var add = document.createElement('button');
-      add.className = 'gf-stop-add';
+      add.className = 'swatch-add';
       add.textContent = '+';
       add.title = 'Add a colour (max ' + G.maxColors + ')';
       add.addEventListener('click', function () {
@@ -202,7 +292,7 @@
 
   function clearPreset() {
     state.params.preset = null;
-    var on = el.presets.querySelector('.gf-preset.on');
+    var on = el.cards.querySelector('.card.on');
     if (on) on.classList.remove('on');
   }
 
@@ -212,12 +302,6 @@
     el.sliders.innerHTML = '';
     G.paramsOf('main').forEach(function (p) {
       el.sliders.appendChild(C.field(p, state.params, onChange));
-      if (p.blurb) {
-        var note = document.createElement('p');
-        note.className = 'gf-slider-note';
-        note.textContent = p.blurb;
-        el.sliders.appendChild(note);
-      }
     });
   }
 
@@ -252,13 +336,15 @@
 
   function refresh() {
     var p = state.params;
+    var preset = p.preset ? G.presetById(p.preset) : null;
 
-    el.badge.textContent = (p.motion ? 'loops ' + p.loop + 's' : 'still') +
-      ' · ' + p.colors.length + ' colours · seed ' + p.seed;
+    el.name.textContent = preset ? preset.name : 'Custom';
+    el.meta.textContent = (p.motion ? p.loop + 's loop' : 'still') + ' · ' +
+      p.colors.length + ' colours · ' + p.seed;
 
     var read = G.readability(p.colors);
     el.contrast.textContent = read.note;
-    el.contrast.className = 'bnote' + (read.ok ? '' : ' warn');
+    el.contrast.className = 'note' + (read.ok ? '' : ' warn');
 
     PV.stop(el.hero);
     if (p.motion > 0 && !reduceMotion) {
@@ -280,6 +366,8 @@
     var out = G.resolve(JSON.parse(JSON.stringify(state.params)));
     out.precomp = !!state.output.precomp;
     out.name = (state.output.name || '').trim();
+    var preset = state.params.preset ? G.presetById(state.params.preset) : null;
+    if (preset) out.label = preset.name;
     return out;
   }
 
@@ -299,17 +387,20 @@
       .catch(function (err) { setStatus(err.message || 'Could not freeze the layer', 'err'); });
   }
 
-  /** Copy settings — the same numbers the host builds from (§7). */
+  /** Copy settings — the same numbers the host builds from. */
   function copySettings() {
     var p = state.params;
+    var preset = p.preset ? G.presetById(p.preset) : null;
     var text = JSON.stringify({
       generator: 'mesh',
+      preset: preset ? preset.name : null,
       colorSpace: p.colorSpace.toUpperCase(),
       colors: p.colors,
       motion: p.motion,
       blend: p.blend,
       flow: p.flow,
       grain: p.grain,
+      separation: p.separation,
       loopSeconds: p.loop,
       seed: p.seed
     }, null, 2);
