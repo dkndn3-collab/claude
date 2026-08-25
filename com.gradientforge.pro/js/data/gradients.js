@@ -240,11 +240,34 @@
    * Letter are the same pipeline with a different rasteriser and land next.
    */
   var MODES = [
-    { id: 'mesh',  name: 'Mesh' },
-    { id: 'shape', name: 'Shape' }
+    { id: 'mesh',   name: 'Mesh' },
+    { id: 'shape',  name: 'Shape' },
+    { id: 'curve',  name: 'Curve' },
+    { id: 'letter', name: 'Letter' }
   ];
 
-  var SHAPE_OPTS = [{ value: 'ellipse', label: 'Ellipse' }];
+  var GEOMETRY_MODES = ['shape', 'curve', 'letter'];
+
+  var SHAPE_OPTS = [
+    { value: 'ellipse', label: 'Ellipse' },
+    { value: 'rect',    label: 'Rectangle' },
+    { value: 'polygon', label: 'Polygon' },
+    { value: 'star',    label: 'Star' }
+  ];
+
+  var FONT_OPTS = [
+    { value: '',                    label: 'System' },
+    { value: 'Georgia',             label: 'Georgia' },
+    { value: 'Times New Roman',     label: 'Times' },
+    { value: 'Helvetica Neue',      label: 'Helvetica' },
+    { value: 'Impact',              label: 'Impact' },
+    { value: 'Courier New',         label: 'Courier' }
+  ];
+
+  var SEAM_OPTS = [
+    { value: 'mirror', label: 'Mirror' },
+    { value: 'wrap',   label: 'Wrap' }
+  ];
 
   /**
    * `modes` limits a parameter to the generators it means something for, which
@@ -259,10 +282,20 @@
     { key: 'size',   label: 'Size',   type: 'number', value: 46, min: 4, max: 140, step: 1, group: 'main',
       modes: ['shape'], blurb: 'how much of the frame the shape covers' },
     { key: 'spread', label: 'Spread', type: 'number', value: 34, min: 1, max: 100, step: 1, group: 'main',
-      modes: ['shape'], blurb: 'how far the ramp reaches from the boundary' },
+      modes: GEOMETRY_MODES, blurb: 'how far the ramp reaches from the outline' },
+    { key: 'direction', label: 'Direction', type: 'number', value: 0, min: 0, max: 100, step: 1,
+      group: 'main', modes: GEOMETRY_MODES,
+      blurb: '0 = colour crosses the outline · 100 = colour runs along it' },
+    { key: 'perLetter', label: 'Per letter', type: 'number', value: 0, min: 0, max: 100, step: 1,
+      group: 'main', modes: ['letter'],
+      blurb: '0 = one ramp across the word · 100 = a full ramp per glyph' },
     { key: 'flow',   label: 'Flow',   type: 'number', value: 28, min: 0, max: 100, step: 1, group: 'main',
-      blurb: 'how much the shape bends and drifts' },
-    { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1, group: 'main',
+      advancedIn: ['letter'], blurb: 'how much the shape bends and drifts' },
+    /* `advancedIn` is how a control steps back without disappearing: it is a
+       main slider in most modes and moves under Advanced in the ones that need
+       the room. Five on the surface, always. */
+    { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1,
+      group: 'main', advancedIn: ['shape', 'letter'],
       blurb: 'texture, and the dither that kills banding' },
 
     { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1,
@@ -273,6 +306,18 @@
       group: 'advanced', modes: ['shape'] },
     { key: 'rotate',  label: 'Rotate', type: 'number', value: 0, min: 0, max: 360, step: 1,
       group: 'advanced', modes: ['shape'], unit: '°' },
+    { key: 'sides',   label: 'Sides', type: 'number', value: 5, min: 3, max: 12, step: 1,
+      group: 'advanced', modes: ['shape'] },
+    { key: 'inner',   label: 'Inner', type: 'number', value: 45, min: 10, max: 90, step: 1,
+      group: 'advanced', modes: ['shape'] },
+    { key: 'corner',  label: 'Corner', type: 'number', value: 22, min: 0, max: 100, step: 1,
+      group: 'advanced', modes: ['shape'] },
+    { key: 'textSize', label: 'Text size', type: 'number', value: 26, min: 5, max: 60, step: 1,
+      group: 'advanced', modes: ['letter'] },
+    { key: 'tracking', label: 'Tracking', type: 'number', value: 0, min: -20, max: 60, step: 1,
+      group: 'advanced', modes: ['letter'] },
+    { key: 'seam',    label: 'Seam', type: 'select', value: 'mirror', options: SEAM_OPTS,
+      group: 'advanced', modes: ['curve'] },
     { key: 'loop',       label: 'Loop', type: 'number', value: 12, min: 2, max: 60, step: 1, unit: 's', group: 'advanced' },
     { key: 'seed',       label: 'Seed',        type: 'number', value: 431, min: 1, max: 9999, step: 1, group: 'advanced' },
     { key: 'colorSpace', label: 'Space', type: 'select', value: 'oklab', options: SPACE_OPTS, group: 'advanced' },
@@ -282,7 +327,11 @@
     { key: 'shape', label: 'Shape', type: 'select', value: 'ellipse', options: SHAPE_OPTS,
       group: 'geometry', modes: ['shape'] },
     { key: 'fill',  label: 'Fill',  type: 'bool', value: false,
-      group: 'geometry', modes: ['shape'] }
+      group: 'geometry', modes: ['shape', 'curve'] },
+    { key: 'text',  label: 'Text',  type: 'text', value: 'Gradient',
+      group: 'geometry', modes: ['letter'], placeholder: 'Type something' },
+    { key: 'font',  label: 'Font',  type: 'select', value: '', options: FONT_OPTS,
+      group: 'geometry', modes: ['letter'] }
   ];
 
   /* ====================================================================== */
@@ -344,6 +393,10 @@
     out.colors = SIGNATURE[0].colors.slice();
     out.preset = null;
     out.mode = 'mesh';
+    // The pen tool's points are parameters like any other — they travel with
+    // Copy settings and survive loading a palette.
+    out.nodes = [];
+    out.closed = false;
     return out;
   }
 
@@ -364,9 +417,12 @@
 
   /** The parameters of one group that apply to one mode. */
   function paramsOf(group, mode) {
+    mode = mode || 'mesh';
     return PARAMS.filter(function (p) {
-      if (p.group !== group) return false;
-      return !p.modes || p.modes.indexOf(mode || 'mesh') !== -1;
+      if (p.modes && p.modes.indexOf(mode) === -1) return false;
+      var demoted = p.advancedIn && p.advancedIn.indexOf(mode) !== -1;
+      if (group === 'advanced') return p.group === 'advanced' || demoted;
+      return p.group === group && !demoted;
     });
   }
 
@@ -393,15 +449,30 @@
    */
   function resolve(p) {
     var colors = (p.colors || []).slice(0, MAX_COLORS);
+    var n = colors.length;
     var rand = rng(p.seed);
     var points = [];
 
-    for (var i = 0; i < colors.length; i++) {
-      var ang = rand() * TAU;
-      var rad = 0.16 + 0.20 * rand();
+    /**
+     * Home positions are spread **evenly** around the circle with one seeded
+     * rotation and a small jitter, not drawn independently. Independent angles
+     * let two points land on top of each other, and then one colour becomes a
+     * blob sitting in a field of the other — which is what a two-colour palette
+     * with one dark end looked like: a hole.
+     *
+     * How far out they sit depends on how many there are. Two colours want to
+     * read as a sweep across the frame, so their homes go outside it and the
+     * frame shows the transition; five colours want to sit inside it.
+     */
+    var homeR = n <= 2 ? 0.78 : n === 3 ? 0.46 : 0.30;
+    var turn = rand() * TAU;
+
+    for (var i = 0; i < n; i++) {
+      var ang = turn + (i / Math.max(n, 1)) * TAU + (rand() - 0.5) * (TAU / Math.max(n, 1)) * 0.45;
+      var rad = (0.16 + 0.20 * rand()) * (n <= 2 ? 0.5 : 1);
       var harm = 1 + Math.floor(rand() * 3);          // 1, 2 or 3 — integer, so it loops
       points.push({
-        home: [0.5 + 0.30 * Math.cos(ang), 0.5 + 0.30 * Math.sin(ang)],
+        home: [0.5 + homeR * Math.cos(ang), 0.5 + homeR * Math.sin(ang)],
         rad: rad,
         harm: harm,
         ang: ang
@@ -414,16 +485,33 @@
       // Everything the SDF pipeline needs, and nothing the shader needs to
       // know about — the rasteriser reads this, the colour pipeline does not.
       geometry: {
+        mode: p.mode || 'mesh',
         shape: p.shape || 'ellipse',
         size: p.size,
         x: p.shapeX,
         y: p.shapeY,
         rotate: p.rotate,
+        sides: p.sides,
+        inner: p.inner,
+        corner: p.corner,
+        nodes: p.nodes || [],
+        closed: !!p.closed,
+        text: p.text,
+        font: p.font,
+        textSize: p.textSize,
+        tracking: p.tracking,
+        glyphCount: glyphCount(p),
         spread: p.spread,
+        direction: p.direction,
+        perLetter: p.perLetter,
+        seam: p.seam,
         fill: !!p.fill
       },
       colors: colors,
       points: points,
+      // Points that sit far apart need a correspondingly wider falloff, or the
+      // middle of the frame belongs to neither of them.
+      reach: n <= 2 ? 0.30 : n === 3 ? 0.62 : 1,
       motion: p.motion,
       blend: p.blend,
       flow: p.flow,
@@ -438,6 +526,11 @@
       // rather than a silent side effect.
       linear: p.linearBlending !== false
     };
+  }
+
+  /** Glyphs the text will produce — the shader needs it to rebuild the run. */
+  function glyphCount(p) {
+    return String(p.text == null ? '' : p.text).replace(/\s/g, '').length || 1;
   }
 
   /** Where a colour point sits at a given point in the loop, 0–1 of the frame. */
@@ -455,6 +548,7 @@
     TAU: TAU,
     maxColors: MAX_COLORS,
     modes: MODES,
+    geometryModes: GEOMETRY_MODES,
     params: PARAMS,
     presets: PRESETS,
     signature: SIGNATURE,

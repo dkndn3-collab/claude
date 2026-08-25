@@ -1,7 +1,7 @@
 /**
  * library.js — the gradient database.
  *
- * 408 presets, imported from Grading_Gradient_Database. A preset here is a name,
+ * 394 presets, imported from Grading_Gradient_Database. A preset here is a name,
  * a palette and a motion profile — numbers and hex strings, nothing else. No
  * image, no baked preview: every tile in the browser is rendered from these
  * values when it scrolls into view, so the whole library costs about 46 KB and
@@ -9,6 +9,10 @@
  *
  * Motion profiles are the shared vocabulary the database uses for movement;
  * each one resolves to the panel's own Motion / Blend / Flow / Separation.
+ *
+ * Fourteen source rows were left out: their colours are within a hair of each
+ * other in OKLab (#000004 → #000000 and the like), so they have no visible
+ * transition and would only ever render as a flat field.
  */
 (function (global) {
   'use strict';
@@ -207,7 +211,6 @@
     [175, "Silver Violet Prism", ["#C5BBB8", "#5B4B74"], "medium_flow", "angularswatches"],
     [176, "Azure Mist Flow", ["#8EC5FC", "#E0C3FF"], "medium_flow", "lineargradient"],
     [177, "Azure to Amber Flow", ["#4159D0", "#FFCD70"], "medium_flow", "lineargradient"],
-    [178, "Obsidian Azure Flow", ["#000004", "#000000"], "medium_flow", "lineargradient"],
     [179, "Amber Mist Flow", ["#ABC8DE", "#FFEDC3"], "medium_flow", "lineargradient"],
     [180, "Mist Magenta Flow", ["#A9CAFF", "#FFBAEC"], "medium_flow", "lineargradient"],
     [181, "Rose Mist Flow", ["#FC8EC5", "#FFE0C3"], "medium_flow", "lineargradient"],
@@ -220,7 +223,6 @@
     [188, "Mist Violet Flow", ["#D9B3E2", "#522CA4"], "medium_flow", "lineargradient"],
     [189, "Azure Midnight Spectrum", ["#121216", "#3D3E42"], "medium_flow", "linearswatches"],
     [190, "Obsidian Azure Spectrum", ["#312C00", "#113CCC"], "medium_flow", "linearswatches"],
-    [191, "Emerald Obsidian Spectrum", ["#141916", "#002A36"], "medium_flow", "linearswatches"],
     [192, "Violet to Azure Spectrum", ["#2F1136", "#6E7EA9"], "medium_flow", "linearswatches"],
     [193, "Obsidian Magenta Flow", ["#2A001B", "#FFFF8D"], "medium_flow", "lineargradient"],
     [194, "Lime Mist Spectrum", ["#D0415E", "#E6D886"], "medium_flow", "linearswatches"],
@@ -246,7 +248,6 @@
     [214, "Aqua Velvet Flow", ["#36FFAA", "#5DFFFF"], "medium_flow", "lineargradient"],
     [215, "Vivid Emerald Flow", ["#36E4FF", "#45FFB7"], "medium_flow", "lineargradient"],
     [216, "Azure Vivid Flow 2", ["#3A2DFF", "#3A69FF"], "medium_flow", "lineargradient"],
-    [217, "Azure to Azure Prism", ["#000021", "#00000C"], "medium_flow", "angulargradient"],
     [218, "Velvet Aqua Prism", ["#6AC3CB", "#7900FF"], "medium_flow", "angulargradient"],
     [219, "Amber Midnight Flow", ["#000C17", "#593205"], "medium_flow", "lineargradient"],
     [220, "Midnight Aqua Flow", ["#3B0000", "#085B63"], "medium_flow", "lineargradient"],
@@ -269,7 +270,6 @@
     [237, "Magenta to Violet Prism", ["#951C65", "#9F8DB4"], "medium_flow", "angularswatches"],
     [238, "Mist Crimson Flow 2", ["#F6A5A3", "#9DDFDD"], "medium_flow", "lineargradient"],
     [239, "Rose Vivid Spectrum", ["#7D1275", "#79103D"], "medium_flow", "linearswatches"],
-    [240, "Pearl Violet Flow", ["#F7E9F3", "#F0E3F4"], "medium_flow", "lineargradient"],
     [241, "Crimson Pearl Flow", ["#FF6F70", "#FFFCFF"], "medium_flow", "lineargradient"],
     [242, "Amber to Amber Flow", ["#FFC488", "#FFE6AA"], "medium_flow", "lineargradient"],
     [243, "Obsidian Azure Flow 2", ["#0F0B36", "#093F76"], "medium_flow", "lineargradient"],
@@ -280,7 +280,6 @@
     [248, "Vivid Aqua Flow 2", ["#0071BD", "#00D272"], "medium_flow", "lineargradient"],
     [249, "Crimson Vivid Flow", ["#FCF0D1", "#BC5539"], "medium_flow", "lineargradient"],
     [250, "Obsidian Aqua Spectrum", ["#000800", "#00CED2"], "medium_flow", "linearswatches"],
-    [251, "Aqua Velvet Prism", ["#0080D2", "#6379DF"], "medium_flow", "angulargradient"],
     [252, "Azure to Aqua Spectrum", ["#003E90", "#94CBCA"], "medium_flow", "linearswatches"],
     [253, "Mist Lime Prism", ["#DCDD95", "#5D0000"], "medium_flow", "angulargradient"],
     [254, "Aqua Mist Spectrum", ["#000046", "#9AFFFF"], "medium_flow", "linearswatches"],
@@ -304,7 +303,6 @@
     [272, "Crimson to Aqua Flow", ["#4D0003", "#004B59"], "medium_flow", "linear gradient"],
     [273, "Electric Aqua Flow", ["#0093E8", "#80D0C7"], "medium_flow", "linear gradient"],
     [274, "Magenta Midnight Spectrum", ["#BF80E0", "#420041"], "medium_flow", "linear swatches"],
-    [275, "Midnight Emerald Spectrum 2", ["#593324", "#3C432A"], "medium_flow", "linear swatches"],
     [276, "Amber Obsidian Prism", ["#8C6C4D", "#000008"], "medium_flow", "angular swatches"],
     [277, "Amber to Aqua Flow 2", ["#FDA373", "#2585B0"], "medium_flow", "linear gradient"],
     [278, "Velvet Aqua Spectrum", ["#42A99D", "#7DC069"], "medium_flow", "linear swatches"],
@@ -342,7 +340,6 @@
     [310, "Vivid Violet Prism", ["#7D9F1F", "#B700F6"], "medium_flow", "angular gradient"],
     [311, "Azure Silver Flow 2", ["#05002C", "#9883BB"], "medium_flow", "linear gradient"],
     [312, "Lime to Aqua Spectrum", ["#FFFFFC", "#2E6973"], "medium_flow", "linear swatches"],
-    [313, "Mist Azure Flow", ["#A2C2DD", "#C5D1DD"], "medium_flow", "linear gradient"],
     [314, "Amber Mist Prism", ["#88BADE", "#E1B394"], "medium_flow", "angular swatches"],
     [315, "Obsidian Amber Spectrum", ["#043638", "#7A3C26"], "medium_flow", "linear swatches"],
     [316, "Amber Silver Spectrum", ["#27231E", "#7E7B6F"], "medium_flow", "linear swatches"],
@@ -366,7 +363,6 @@
     [334, "Amber Velvet Flow", ["#310E54", "#CA907B"], "medium_flow", "linear gradient"],
     [335, "Vivid Crimson Flow 2", ["#2B0093", "#FBA7B9"], "medium_flow", "linear gradient"],
     [336, "Azure Pearl Spectrum", ["#060069", "#EDD0CF"], "medium_flow", "linear swatches"],
-    [337, "Amber to Amber Spectrum", ["#D0922C", "#D8752C"], "medium_flow", "linear swatches"],
     [338, "Midnight Aqua Spectrum", ["#164C45", "#E9FF80"], "medium_flow", "linear swatches"],
     [339, "Magenta Velvet Spectrum 2", ["#83356F", "#E871E2"], "medium_flow", "linear swatches"],
     [340, "Obsidian Magenta Spectrum", ["#17151A", "#FFF4FF"], "medium_flow", "linear swatches"],
@@ -379,7 +375,6 @@
     [347, "Amber to Amber Spectrum 2", ["#A87759", "#E8CEC3"], "medium_flow", "linear swatches"],
     [348, "Pearl Lime Flow", ["#F3F6E5", "#FF6BC2"], "medium_flow", "linear gradient"],
     [349, "Rose Vivid Spectrum 2", ["#CAB36E", "#CB3D78"], "medium_flow", "linear swatches"],
-    [350, "Pearl Crimson Prism", ["#FFFFFF", "#FFFFFF"], "medium_flow", "angular swatches"],
     [351, "Violet Pearl Spectrum 2", ["#6F34AE", "#DED9FF"], "medium_flow", "linear swatches"],
     [352, "Azure to Lime Flow", ["#555CFF", "#FFFF8A"], "medium_flow", "linear gradient"],
     [353, "Silver Emerald Spectrum 2", ["#5B6E51", "#D7F290"], "medium_flow", "linear swatches"],
@@ -390,7 +385,6 @@
     [358, "Velvet Crimson Spectrum", ["#FF847B", "#1EFFFF"], "medium_flow", "linear swatches"],
     [359, "Aqua Pearl Flow", ["#D3CEFF", "#ECFFFF"], "medium_flow", "linear gradient"],
     [360, "Pearl Lime Flow 2", ["#F2EACB", "#A3C634"], "medium_flow", "linear gradient"],
-    [361, "Aqua Mist Halo", ["#A6D6E5", "#A6D6E5"], "medium_flow", "radial swatches"],
     [362, "Aqua to Azure Flow", ["#D8F5FB", "#A9B5D4"], "medium_flow", "linear gradient"],
     [363, "Pearl Aqua Spectrum 2", ["#DEE6EA", "#8090A1"], "medium_flow", "linear swatches"],
     [364, "Violet Mist Flow", ["#8ECAFF", "#E2C1FF"], "medium_flow", "linear gradient"],
@@ -409,13 +403,10 @@
     [377, "Amber to Lime Spectrum", ["#FBEAD1", "#B0AE9A"], "medium_flow", "linear swatches"],
     [378, "Mist Azure Flow 2", ["#AAC6FF", "#FFC6EF"], "medium_flow", "linear gradient"],
     [379, "Rose Vivid Halo", ["#FFC845", "#9C002E"], "medium_flow", "radial gradient"],
-    [380, "Mist Azure Flow 3", ["#C1E5FF", "#C1C9F1"], "medium_flow", "linear gradient"],
     [381, "Crimson Velvet Prism 3", ["#BC3630", "#A9A75E"], "medium_flow", "angular swatches"],
-    [382, "Amber to Amber Halo", ["#ECD6CB", "#FBD6B8"], "medium_flow", "radial gradient"],
     [383, "Mist Crimson Flow 3", ["#D5A4A2", "#D5AA00"], "medium_flow", "linear gradient"],
     [384, "Emerald Velvet Spectrum", ["#1CA31A", "#5AD8B4"], "medium_flow", "linear swatches"],
     [385, "Vivid Azure Spectrum 4", ["#9E1A78", "#6A6099"], "medium_flow", "linear swatches"],
-    [386, "Violet Mist Prism", ["#CA93FF", "#D39BFF"], "medium_flow", "angular swatches"],
     [387, "Crimson to Amber Halo", ["#B5685F", "#FFAC2F"], "medium_flow", "radial gradient"],
     [388, "Pearl Lime Flow 3", ["#F5F3D9", "#FCC490"], "medium_flow", "linear gradient"],
     [389, "Magenta Mist Spectrum 2", ["#415ED0", "#D886E6"], "medium_flow", "linear swatches"],
@@ -431,7 +422,6 @@
     [399, "Amber Mist Spectrum", ["#FF7700", "#FFDBAE"], "medium_flow", "linear swatches"],
     [400, "Velvet Lime Spectrum 2", ["#FF68CE", "#FFE27B"], "medium_flow", "linear swatches"],
     [401, "Azure Electric Flow", ["#0F1434", "#0487FF"], "medium_flow", "linear gradient"],
-    [402, "Crimson to Crimson Prism", ["#FF998B", "#FF9BAC"], "medium_flow", "angular gradient"],
     [403, "Velvet Lime Prism", ["#C2D083", "#163358"], "medium_flow", "angular swatches"],
     [404, "Emerald Mist Flow 3", ["#062C38", "#C5F8EB"], "medium_flow", "linear gradient"],
     [405, "Midnight Magenta Spectrum 2", ["#0F2748", "#C034A5"], "medium_flow", "linear swatches"],

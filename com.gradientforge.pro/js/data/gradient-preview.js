@@ -41,6 +41,7 @@
     'uniform float uFlow;       // 0..1  domain warp',
     'uniform float uGrain;      // 0..1',
     'uniform float uSep;        // 0..1  soft field <-> distinct masses',
+    'uniform float uReach;      // widens the falloff when points sit far apart',
     'uniform float uSeed;',
     'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
     '',
@@ -48,6 +49,11 @@
     'uniform sampler2D uSDF;    // R,G signed distance · B along · A glyph id',
     'uniform float uSpread;     // ramp width across the boundary, frame heights',
     'uniform float uFill;       // 1 = confined inside · 0 = bleeding both ways',
+    'uniform float uOpen;       // 1 = the geometry has no interior',
+    'uniform float uDir;        // 0 = across the boundary · 1 = along it',
+    'uniform float uPerLetter;  // 0 = one ramp across the word · 1 = per glyph',
+    'uniform float uSeam;       // 1 = mirror t so a closed path has no seam',
+    'uniform float uGlyphs;     // how many glyphs the text has',
     '',
     'const float TAU = 6.28318530718;',
     '',
@@ -128,6 +134,25 @@
     '  return (f.r + f.g / 255.0 - 0.5) * 4.0;   // unpack 16-bit, ±2 heights',
     '}',
     '',
+    '/* The along-the-boundary coordinate, carried in B, with the glyph id in A.',
+    '   For text the two rebuild both readings: B is the position across one',
+    '   glyph, and B plus the glyph index is the position across the whole word,',
+    '   so Per-letter just blends between them. */',
+    'float alongAt(vec2 p){',
+    '  vec4 f = texture2D(uSDF, p);',
+    '  float t = f.b;',
+    '  if (uGlyphs > 0.5) {',
+    '    float n = max(uGlyphs, 1.0);',
+    '    float across = (f.a * (n - 1.0) + t) / n;',
+    '    t = mix(across, t, uPerLetter);',
+    '  }',
+    '  /* A closed path makes t cyclic. Reflecting it means t and 1-t give the',
+    '     same colour, so the ramp meets itself at the join instead of cutting;',
+    '     wrapping would need the first and last colour to match. */',
+    '  if (uSeam > 0.5) t = 1.0 - abs(2.0 * t - 1.0);',
+    '  return clamp(t, 0.0, 1.0);',
+    '}',
+    '',
     'void main(){',
     '  vec2 uv = gl_FragCoord.xy / uRes;',
     '  float aspect = uRes.x / uRes.y;',
@@ -149,7 +174,7 @@
     '     there is no seam and no banding structure to begin with. */',
     '  /* Separation tightens every point and thins the tail, so the colours',
     '     read as distinct masses instead of one continuous field. */',
-    '  float sharp = mix(26.0, 3.2, uBlend) * (1.0 + uSep * 1.8);',
+    '  float sharp = mix(26.0, 3.2, uBlend) * (1.0 + uSep * 1.8) * uReach;',
     '  float tail  = 0.34 * (1.0 - 0.9 * uSep);',
     '  vec3 acc = vec3(0.0);',
     '  float wsum = 0.0;',
@@ -185,10 +210,16 @@
     '     distance field instead of against the colour points. Warp, loop and',
     '     dither are untouched — only the gradient coordinate changes. */',
     '  if (uMode > 0.5) {',
-    '    float sd = sdfAt(clamp(p, 0.0, 1.0));',
+    '    vec2 sp = clamp(p, 0.0, 1.0);',
+    '    float sd = sdfAt(sp);',
     '    float w = max(uSpread, 0.004);',
-    '    float g = uFill > 0.5 ? clamp(-sd / w, 0.0, 1.0)',
-    '                          : clamp(0.5 + sd / (2.0 * w), 0.0, 1.0);',
+    '    /* Two axes from one field: across the boundary, and along it. The',
+    '       Direction slider is a straight blend between them — one control',
+    '       instead of a mode switch, and every value in between is useful. */',
+    '    float across = uOpen > 0.5 ? clamp(sd / w, 0.0, 1.0)',
+    '                 : uFill > 0.5 ? clamp(-sd / w, 0.0, 1.0)',
+    '                               : clamp(0.5 + sd / (2.0 * w), 0.0, 1.0);',
+    '    float g = mix(across, alongAt(sp), uDir);',
     '    gl_FragColor = vec4(dither(toSRGB(rampLin(g))), 1.0);',
     '    return;',
     '  }',
@@ -262,8 +293,9 @@
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     U = {};
-    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSeed',
-     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uFill']
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uReach', 'uSeed',
+     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uFill', 'uOpen', 'uDir', 'uPerLetter',
+     'uSeam', 'uGlyphs']
       .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
     U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
     U.uHome = gl.getUniformLocation(prog, 'uHome[0]');
@@ -342,12 +374,20 @@
     gl.uniform1f(U.uFlow, r.flow / 100);
     gl.uniform1f(U.uGrain, r.grain / 100);
     gl.uniform1f(U.uSep, (r.separation || 0) / 100);
+    gl.uniform1f(U.uReach, r.reach || 1);
     gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
     gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
 
+    var gm = r.geometry;
     gl.uniform1f(U.uMode, geometry ? 1 : 0);
-    gl.uniform1f(U.uSpread, (r.geometry.spread || 40) / 100);
-    gl.uniform1f(U.uFill, r.geometry.fill ? 1 : 0);
+    gl.uniform1f(U.uSpread, (gm.spread || 40) / 100);
+    gl.uniform1f(U.uFill, gm.fill ? 1 : 0);
+    gl.uniform1f(U.uOpen, geometry && sdf && sdf.open ? 1 : 0);
+    gl.uniform1f(U.uDir, (gm.direction || 0) / 100);
+    gl.uniform1f(U.uPerLetter, (gm.perLetter || 0) / 100);
+    // Only a closed run of t needs the seam treatment.
+    gl.uniform1f(U.uSeam, (r.mode !== 'letter' && !(sdf && sdf.open) && gm.seam !== 'wrap') ? 1 : 0);
+    gl.uniform1f(U.uGlyphs, r.mode === 'letter' ? Math.max(1, gm.glyphCount || 1) : 0);
     if (geometry) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, sdf.texture);

@@ -19,6 +19,8 @@
     params: G.fromPreset('aurora'),
     harmony: 'analogous',
     filter: 'all',
+    allFilters: false,
+    selected: -1,
     query: '',
     output: { precomp: true, name: '' }
   };
@@ -55,6 +57,8 @@
     view.innerHTML = '' +
       '<section class="stage">' +
         '<canvas class="canvas" id="gfHero"></canvas>' +
+        '<canvas class="pen" id="gfPen" hidden tabindex="0" ' +
+                'aria-label="Curve editor: click to add a point, drag to bend it"></canvas>' +
         '<div class="stage-ring" aria-hidden="true"></div>' +
         '<div class="stage-info">' +
           '<span class="stage-name" id="gfName"></span>' +
@@ -73,6 +77,7 @@
         '<input class="search" id="gfSearch" type="text" spellcheck="false" autocomplete="off" ' +
                'placeholder="Search palettes">' +
         '<div class="chips" id="gfFilters"></div>' +
+        '<div class="chips-foot"><button class="chips-more" id="gfMore"></button></div>' +
         '<div class="cards" id="gfCards"></div>' +
       '</section>' +
 
@@ -100,6 +105,7 @@
 
     el.view = view;
     el.hero = view.querySelector('#gfHero');
+    el.pen = view.querySelector('#gfPen');
     el.name = view.querySelector('#gfName');
     el.meta = view.querySelector('#gfMeta');
     el.modes = view.querySelector('#gfModes');
@@ -107,6 +113,7 @@
     el.count = view.querySelector('#gfCount');
     el.search = view.querySelector('#gfSearch');
     el.filters = view.querySelector('#gfFilters');
+    el.more = view.querySelector('#gfMore');
     el.cards = view.querySelector('#gfCards');
     el.stops = view.querySelector('#gfStops');
     el.contrast = view.querySelector('#gfContrast');
@@ -124,6 +131,15 @@
     el.create.addEventListener('click', create);
     el.freeze.addEventListener('click', freeze);
     el.copy.addEventListener('click', copySettings);
+    el.more.addEventListener('click', function () {
+      state.allFilters = !state.allFilters;
+      renderFilters();
+    });
+    el.pen.addEventListener('pointerdown', penDown);
+    el.pen.addEventListener('pointermove', penMove);
+    el.pen.addEventListener('pointerup', penUp);
+    el.pen.addEventListener('pointercancel', penUp);
+    el.pen.addEventListener('keydown', penKey);
     el.search.addEventListener('input', function () {
       state.query = el.search.value;
       renderCards();
@@ -161,18 +177,216 @@
 
   /** Geometry-specific controls, present only while that mode is active. */
   function renderGeometry() {
-    var fields = G.paramsOf('geometry', state.params.mode);
-    el.geometry.hidden = !fields.length;
+    var mode = state.params.mode;
+    var fields = G.paramsOf('geometry', mode);
+    var pen = mode === 'curve';
+    el.geometry.hidden = !fields.length && !pen;
     el.geometry.innerHTML = '';
     fields.forEach(function (p) {
       el.geometry.appendChild(C.field(p, state.params, onChange));
     });
+    if (pen) el.geometry.appendChild(penTools());
+    el.pen.hidden = !pen;
+    if (pen) drawPen();
+  }
+
+  function penTools() {
+    var row = document.createElement('div');
+    row.className = 'tools';
+
+    var hint = document.createElement('span');
+    hint.className = 'tool-hint';
+    hint.textContent = state.params.nodes.length
+      ? state.params.nodes.length + (state.params.closed ? ' points · closed' : ' points')
+      : 'Click the canvas to draw';
+    row.appendChild(hint);
+
+    function tool(label, title, fn, on) {
+      var b = document.createElement('button');
+      b.className = 'tool' + (on ? ' on' : '');
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener('click', fn);
+      row.appendChild(b);
+      return b;
+    }
+
+    var sel = state.selected;
+    var node = sel >= 0 ? state.params.nodes[sel] : null;
+    if (node) {
+      tool(node.corner ? 'Corner' : 'Smooth',
+           'Toggle the selected point between smooth and corner',
+           function () { node.corner = !node.corner; onGeometry(); }, true);
+      tool('Delete', 'Remove the selected point', function () {
+        state.params.nodes.splice(sel, 1);
+        state.selected = -1;
+        onGeometry();
+      });
+    }
+    tool(state.params.closed ? 'Open' : 'Close', 'Close or open the path', function () {
+      if (state.params.nodes.length > 2) { state.params.closed = !state.params.closed; onGeometry(); }
+    }, state.params.closed);
+    tool('Clear', 'Start again', function () {
+      state.params.nodes = []; state.params.closed = false; state.selected = -1; onGeometry();
+    });
+    return row;
+  }
+
+  /* ------------------------------------------------------------- pen tool */
+
+  /**
+   * A minimal pen: click to place a point, drag while placing to pull its
+   * handles, drag a point to move it, drag a handle to reshape, click the first
+   * point to close. Everything lands in `params.nodes`, in 0–1 of the frame
+   * height, which is the same space the rasteriser reads.
+   */
+  var drag = null;
+
+  function penSpace(ev) {
+    var r = el.pen.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) / r.height, y: (ev.clientY - r.top) / r.height, h: r.height };
+  }
+
+  function hitTest(pt) {
+    var nodes = state.params.nodes, tol = 14 / (el.pen.getBoundingClientRect().height || 1);
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      var n = nodes[i];
+      if (Math.hypot(n.x - pt.x, n.y - pt.y) < tol) return { node: i, handle: false };
+      if (!n.corner && i === state.selected &&
+          Math.hypot(n.x + (n.hx || 0) - pt.x, n.y + (n.hy || 0) - pt.y) < tol) {
+        return { node: i, handle: true };
+      }
+    }
+    return null;
+  }
+
+  function penDown(ev) {
+    if (state.params.mode !== 'curve') return;
+    ev.preventDefault();
+    el.pen.focus();
+    var pt = penSpace(ev);
+    var hit = hitTest(pt);
+
+    if (hit) {
+      // Clicking the first point closes the path.
+      if (!hit.handle && hit.node === 0 && state.params.nodes.length > 2 && !state.params.closed) {
+        state.params.closed = true;
+        state.selected = 0;
+        onGeometry();
+        return;
+      }
+      state.selected = hit.node;
+      drag = { index: hit.node, handle: hit.handle, moved: false };
+    } else {
+      state.params.nodes.push({ x: pt.x, y: pt.y, hx: 0, hy: 0, corner: false });
+      state.selected = state.params.nodes.length - 1;
+      drag = { index: state.selected, handle: true, fresh: true, moved: false };
+    }
+    el.pen.setPointerCapture(ev.pointerId);
+    onGeometry();
+  }
+
+  function penMove(ev) {
+    if (!drag) return;
+    var pt = penSpace(ev);
+    var n = state.params.nodes[drag.index];
+    if (!n) return;
+    if (drag.handle) {
+      n.hx = pt.x - n.x; n.hy = pt.y - n.y;
+      n.corner = false;
+    } else {
+      n.x = pt.x; n.y = pt.y;
+    }
+    drag.moved = true;
+    onGeometry();
+  }
+
+  function penUp(ev) {
+    if (!drag) return;
+    // A click with no drag is a corner point, not a smooth one with zero pull.
+    var n = state.params.nodes[drag.index];
+    if (n && drag.fresh && !drag.moved) n.corner = true;
+    try { el.pen.releasePointerCapture(ev.pointerId); } catch (e) {}
+    drag = null;
+    onGeometry();
+  }
+
+  function penKey(ev) {
+    if (state.params.mode !== 'curve') return;
+    var nodes = state.params.nodes;
+    if ((ev.key === 'Backspace' || ev.key === 'Delete') && state.selected >= 0) {
+      nodes.splice(state.selected, 1);
+      state.selected = -1;
+      ev.preventDefault();
+      onGeometry();
+    } else if (ev.key === 'Escape') {
+      state.selected = -1;
+      onGeometry();
+    } else if (ev.key === 'Enter' && nodes.length > 2) {
+      state.params.closed = !state.params.closed;
+      onGeometry();
+    }
+  }
+
+  function onGeometry() {
+    clearPreset();
+    renderGeometry();
+    refresh();
+  }
+
+  /** The editor's own overlay: points, handles and the path between them. */
+  function drawPen() {
+    var rect = el.pen.getBoundingClientRect();
+    var dpr = Math.min(global.devicePixelRatio || 1, 2);
+    var w = Math.max(2, Math.round(rect.width * dpr)), h = Math.max(2, Math.round(rect.height * dpr));
+    if (el.pen.width !== w || el.pen.height !== h) { el.pen.width = w; el.pen.height = h; }
+    var ctx = el.pen.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+
+    var nodes = state.params.nodes, s = rect.height * dpr;
+    if (!nodes.length) return;
+
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(nodes[0].x * s, nodes[0].y * s);
+    var last = nodes.length - (state.params.closed ? 0 : 1);
+    for (var i = 0; i < last; i++) {
+      var a = nodes[i], b = nodes[(i + 1) % nodes.length];
+      ctx.bezierCurveTo((a.x + (a.hx || 0)) * s, (a.y + (a.hy || 0)) * s,
+                        (b.x - (b.hx || 0)) * s, (b.y - (b.hy || 0)) * s, b.x * s, b.y * s);
+    }
+    ctx.stroke();
+
+    nodes.forEach(function (n, i) {
+      var on = i === state.selected;
+      if (on && !n.corner) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath();
+        ctx.moveTo(n.x * s, n.y * s);
+        ctx.lineTo((n.x + (n.hx || 0)) * s, (n.y + (n.hy || 0)) * s);
+        ctx.stroke();
+        dot((n.x + (n.hx || 0)) * s, (n.y + (n.hy || 0)) * s, 3.5 * dpr, 'rgba(255,255,255,0.75)');
+      }
+      dot(n.x * s, n.y * s, (on ? 5 : 4) * dpr, on ? '#fff' : 'rgba(255,255,255,0.8)');
+    });
+
+    function dot(x, y, r, fill) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.lineWidth = 1 * dpr;
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.stroke();
+    }
   }
 
   /* --------------------------------------------------------------- library */
 
   function renderFilters() {
     el.filters.innerHTML = '';
+    el.filters.classList.toggle('open', !!state.allFilters);
     G.filters.forEach(function (f) {
       var b = document.createElement('button');
       b.className = 'chip' + (state.filter === f.id ? ' on' : '');
@@ -185,6 +399,12 @@
       });
       el.filters.appendChild(b);
     });
+
+    // The chips wrap; two rows show, the rest are one click away. The toggle
+    // lives outside the clipped list, or it would be the one chip nobody can
+    // reach.
+    el.more.textContent = state.allFilters ? 'Fewer' : 'More';
+    el.more.hidden = el.filters.scrollHeight <= el.filters.clientHeight && !state.allFilters;
   }
 
   /**
@@ -273,7 +493,9 @@
     });
   }
 
-  var GEOM_KEYS = ['shape', 'size', 'spread', 'shapeX', 'shapeY', 'rotate', 'fill'];
+  var GEOM_KEYS = ['shape', 'size', 'spread', 'direction', 'shapeX', 'shapeY', 'rotate',
+                   'sides', 'inner', 'corner', 'fill', 'nodes', 'closed', 'text', 'font',
+                   'textSize', 'tracking', 'perLetter', 'seam'];
   function geometryOf(p) {
     var out = {};
     GEOM_KEYS.forEach(function (k) { out[k] = p[k]; });
@@ -405,6 +627,8 @@
     var native = p.mode === 'mesh';
     el.create.disabled = !native;
     el.create.title = native ? '' : 'The After Effects build covers Mesh so far — geometry modes are preview-only.';
+
+    if (!el.pen.hidden) drawPen();
 
     PV.stop(el.hero);
     if (p.motion > 0 && !reduceMotion) {
