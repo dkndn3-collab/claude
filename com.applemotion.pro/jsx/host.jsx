@@ -20,6 +20,8 @@
 #include "components/progress.jsx"
 #include "components/badge.jsx"
 
+#include "gradient/engine.jsx"
+
 #include "api.jsx"
 
-AMUI.version = '0.2.0';
+AMUI.version = '0.3.0';

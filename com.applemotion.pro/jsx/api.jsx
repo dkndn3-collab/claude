@@ -33,6 +33,8 @@ $.global.AMUI = $.global.AMUI || {};
     switch (action) {
       case 'create': return create(p);
       case 'motion': return AMUI.Motion.apply(p.preset, p);
+      case 'gradient': return AMUI.Gradient.create(p);
+      case 'freeze': return AMUI.Gradient.freeze();
       case 'action': return AMUI.Actions.run(p.id);
       default: throw new Error('Unknown action: ' + action);
     }
@@ -53,7 +55,9 @@ $.global.AMUI = $.global.AMUI || {};
 
       var label = action === 'create'
         ? 'Apple Motion UI — create ' + (params.__type || 'component')
-        : 'Apple Motion UI — ' + action;
+        : action === 'gradient'
+          ? 'Apple Motion UI — gradient ' + (params.label || '')
+          : 'Apple Motion UI — ' + action;
 
       var result;
       app.beginUndoGroup(label);

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="9.0"
                    ExtensionBundleId="com.applemotionui.panel"
-                   ExtensionBundleVersion="0.2.0"
+                   ExtensionBundleVersion="0.3.0"
                    ExtensionBundleName="Apple Motion UI"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="com.applemotionui.panel.main" Version="0.2.0"/>
+    <Extension Id="com.applemotionui.panel.main" Version="0.3.0"/>
   </ExtensionList>
 
   <ExecutionEnvironment>

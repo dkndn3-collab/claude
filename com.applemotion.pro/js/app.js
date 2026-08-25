@@ -1,16 +1,20 @@
 /**
  * app.js — panel controller.
  *
- * Three views (components / motion / actions). Component tiles play their real
- * entrance animation on hover (§24). Clicking one opens the builder (§25): a
- * live hero preview with a Play button, then Variant · Style · Content ·
- * Animation sections — every value flows to the same ExtendScript call that
- * builds the After Effects composition.
+ * Four views (components / motion / gradient / actions). Component tiles play
+ * their real entrance animation on hover (§24). Clicking one opens the builder
+ * (§25): a live hero preview with a Play button, then Variant · Style ·
+ * Content · Animation sections — every value flows to the same ExtendScript
+ * call that builds the After Effects composition.
+ *
+ * The Gradient tab is self-contained in js/gradient.js; app.js only mounts it
+ * and tells it when it is on screen.
  */
 (function () {
   'use strict';
 
   var L = window.LIBRARY, P = window.PREVIEWS, M = window.MOTION, A = window.ANIMATOR, TK = window.TOKENS;
+  var C = window.CONTROLS, GP = window.GRADIENT_PANEL;
 
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -24,6 +28,7 @@
     views: {
       components: document.getElementById('view-components'),
       motion:     document.getElementById('view-motion'),
+      gradient:   document.getElementById('view-gradient'),
       actions:    document.getElementById('view-actions')
     },
     status:    document.getElementById('status'),
@@ -212,6 +217,8 @@
     state.view = name;
     el.tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.view === name)); });
     Object.keys(el.views).forEach(function (k) { el.views[k].hidden = (k !== name); });
+    // The gradient preview is a live render — it only runs while it is visible.
+    if (GP) GP.activate(name === 'gradient');
   }
   el.tabs.forEach(function (t) { t.addEventListener('click', function () { showView(t.dataset.view); }); });
 
@@ -366,89 +373,14 @@
     return s;
   }
 
-  /** Build one labelled field bound to `target[key]`, calling onChange after. */
-  function fieldFor(p, target, onChange) {
-    var field = document.createElement('div');
-    field.className = 'field';
-    field.dataset.key = p.key;
-
-    var label = document.createElement('label');
-    label.textContent = p.label + (p.unit ? ' (' + p.unit + ')' : '');
-    label.setAttribute('for', 'f_' + p.key);
-    field.appendChild(label);
-
-    var control = document.createElement('div');
-    control.className = 'control';
-    control.appendChild(makeControl(p, target, onChange));
-    field.appendChild(control);
-    return field;
-  }
-
-  function makeControl(p, target, onChange) {
-    var frag = document.createDocumentFragment();
-    var fire = onChange || function () {};
-
-    if (p.type === 'number') {
-      var range = document.createElement('input');
-      range.type = 'range';
-      range.min = p.min; range.max = p.max; range.step = p.step || 1;
-      range.value = target[p.key];
-      var num = document.createElement('input');
-      num.type = 'number';
-      num.id = 'f_' + p.key;
-      num.min = p.min; num.max = p.max; num.step = p.step || 1;
-      num.value = target[p.key];
-      function commit(v) {
-        v = Math.max(p.min, Math.min(p.max, Number(v)));
-        if (isNaN(v)) v = p.min;
-        target[p.key] = v; range.value = v; num.value = v; fire(p.key);
-      }
-      range.addEventListener('input', function () { commit(range.value); });
-      num.addEventListener('change', function () { commit(num.value); });
-      frag.appendChild(range); frag.appendChild(num);
-
-    } else if (p.type === 'bool') {
-      var sw = document.createElement('button');
-      sw.type = 'button'; sw.className = 'switch'; sw.id = 'f_' + p.key;
-      sw.setAttribute('role', 'switch');
-      sw.setAttribute('aria-checked', String(!!target[p.key]));
-      sw.addEventListener('click', function () {
-        target[p.key] = !target[p.key];
-        sw.setAttribute('aria-checked', String(target[p.key]));
-        fire(p.key);
-      });
-      frag.appendChild(sw);
-
-    } else if (p.type === 'select') {
-      var sel = document.createElement('select');
-      sel.id = 'f_' + p.key;
-      p.options.forEach(function (o) {
-        var opt = document.createElement('option');
-        opt.value = o.value; opt.textContent = o.label;
-        if (o.value === target[p.key]) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', function () { target[p.key] = sel.value; fire(p.key); });
-      frag.appendChild(sel);
-
-    } else {
-      var txt = document.createElement('input');
-      txt.type = 'text'; txt.id = 'f_' + p.key; txt.value = target[p.key];
-      txt.addEventListener('input', function () { target[p.key] = txt.value; fire(p.key); });
-      frag.appendChild(txt);
-    }
-    return frag;
-  }
+  /** Controls come from js/lib/controls.js — the gradient builder shares them. */
+  function fieldFor(p, target, onChange) { return C.field(p, target, onChange); }
 
   function onParamChange(key) {
     // Picking a glass material pulls its blur value in with it.
     if (key === 'glassPreset' && 'blur' in state.params) {
       state.params.blur = L.glassById(state.params.glassPreset).blur;
-      var f = el.sheetSections.querySelector('[data-key="blur"]');
-      if (f) {
-        var r = f.querySelector('input[type=range]'), n = f.querySelector('input[type=number]');
-        if (r) r.value = state.params.blur; if (n) n.value = state.params.blur;
-      }
+      C.sync(el.sheetSections, 'blur', state.params.blur);
     }
     // A variant chip changes many params, but toggling glass etc. can leave the
     // chosen variant stale — that's fine, the variant chips reflect last pick.
@@ -558,6 +490,7 @@
     applyHostTheme();
     window.CEP.onThemeChange(applyHostTheme);
     renderAll();
+    if (GP) GP.build(el.views.gradient, setStatus);
     showView('components');
 
     if (window.CEP.isMock) { setStatus('Preview mode — no After Effects host detected'); return; }
