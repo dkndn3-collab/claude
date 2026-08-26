@@ -244,9 +244,32 @@ outline — the medial axis — `t` jumps, and at high **Direction** that shows 
 crease. It is the same artefact every nearest-point contour gradient has,
 including proGradient's.
 
-The After Effects build covers the mesh engine. A geometry mode has no native
-equivalent yet, so **Create** is disabled there and says why, rather than
-quietly building something else.
+### One Create, three sources
+
+**Create gradient** does not know which tab is open. It asks the active tab for
+its geometry, and builds:
+
+```
+geometry = activeSource().getGeometry()
+if (!geometry.isValid) → show geometry.reason, stop
+applyGradient(geometry, readSharedParams())
+```
+
+Each source answers for itself — Mesh has no geometry and is valid whenever a
+comp is open; Curve wants a mask path in the timeline; Letter wants a text
+layer. Validity is the *host's* call (`jsx/geometry.jsx` probes the real
+selection on a 1.5 s timer), so the disabled button and the refused build can
+never disagree: they quote the same sentence. A blocked **Create** prints its
+reason under the button rather than only in a tooltip, and pressing it never
+silently builds something else.
+
+The colour field is identical in all three: same points, same orbits, same
+loop. What Curve and Letter add is a **track matte** built from the user's own
+layer — a duplicate with native effects on it, never a rasterised copy. Curve
+strokes the mask (the one native way to get pixels out of an *open* path) or
+fills it when **Fill** is on; Letter uses the glyph alpha. Either way a blurred
+edge, driven by a live **Spread** slider on the matte, is what turns the
+outline into a ramp. The user's own layer is never modified.
 
 ---
 
@@ -370,8 +393,9 @@ js/
 jsx/
   host.jsx                #includes everything, in dependency order
   api.jsx                 the one function the panel calls; undo grouping
-  core/utils.jsx          comps, colour, expression controls, blur
-  engine.jsx              the native layer stack
+  core/utils.jsx          comps, colour, expression controls, blur, selection
+  geometry.jsx            the three sources: probe · read · matte
+  engine.jsx              the colour field, and what each source does with it
 ```
 
 `js/data/gradients.js` is the contract between the two renderers: both read the

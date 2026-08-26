@@ -107,13 +107,15 @@ GF.Gradient = (function () {
   /* Build                                                                  */
   /* ====================================================================== */
 
-  function create(p) {
-    var parent = U.activeComp();
-    var wanted = (p.name && p.name.length) ? p.name : 'GRADIENT — ' + p.label;
-    var comp = p.precomp ? U.makeComp(wanted, parent.width, parent.height, parent) : parent;
-
+  /**
+   * The colour field — the mesh, and nothing about geometry.
+   *
+   * Every mode builds this identically: same points, same orbits, same loop.
+   * What the geometry modes add on top is a matte, so there is one colour
+   * pipeline in the plugin and not three that drift apart.
+   */
+  function field(comp, p) {
     var colors = p.colors || [];
-    if (colors.length < 2) throw new Error('A mesh gradient needs at least two colours.');
 
     // Everything this build adds, so a flat build can be moved under the user's
     // existing layers as one group.
@@ -248,6 +250,37 @@ GF.Gradient = (function () {
     /* ---- assemble ------------------------------------------------------ */
 
     ctrl.moveToBeginning();
+    return { made: made, ctrl: ctrl };
+  }
+
+  /* ====================================================================== */
+  /* Create — one path, three geometry sources                              */
+  /* ====================================================================== */
+
+  /**
+   * The panel calls this for every tab. It never branches on which tab is open:
+   * it asks the mode's source for its geometry, and a source that has none to
+   * give throws the same sentence the disabled button was already showing.
+   */
+  function create(p) {
+    var parent = U.activeComp();
+    var mode = (p.geometry && p.geometry.mode) || p.mode || 'mesh';
+    var source = GF.Geom.sourceFor(mode);
+    var geometry = source.read(parent);
+
+    var colors = p.colors || [];
+    if (colors.length < 2) throw new Error('A gradient needs at least two colours.');
+
+    // A shaped gradient has to be matted, and a matte cuts one layer, not a
+    // stack of six — so geometry modes always get their own comp.
+    var shaped = mode !== 'mesh';
+    var nested = shaped || !!p.precomp;
+
+    var wanted = (p.name && p.name.length) ? p.name : 'GRADIENT — ' + p.label;
+    var comp = nested ? U.makeComp(wanted, parent.width, parent.height, parent) : parent;
+
+    var built = field(comp, p);
+    var made = built.made;
 
     // OKLab and HCL both ask for mixing in linear light; this is as close as a
     // native composite gets to it.
@@ -263,24 +296,55 @@ GF.Gradient = (function () {
 
     var count = made.length + ' native layers, 0 assets';
 
-    if (p.precomp) {
-      var placed = parent.layers.add(comp);
-      placed.name = comp.name;
-      placed.property('ADBE Transform Group').property('ADBE Position')
-        .setValue([parent.width / 2, parent.height / 2]);
-      // A gradient is a background: it goes under whatever is already there.
+    if (!nested) {
+      // Built straight into the comp — keep the stack together at the bottom,
+      // in the order it was assembled.
+      made.sort(function (a, b) { return a.index - b.index; });
+      for (var m = 0; m < made.length; m++) { try { made[m].moveToEnd(); } catch (e) {} }
+      built.ctrl.selected = true;
+      return p.label + ' built into ' + comp.name + ' · ' + count + blending;
+    }
+
+    var placed = parent.layers.add(comp);
+    placed.name = comp.name;
+    placed.property('ADBE Transform Group').property('ADBE Position')
+      .setValue([parent.width / 2, parent.height / 2]);
+
+    var matte = source.matte(parent, geometry, p);
+    if (!matte) {
+      // A gradient with no geometry is a background: it goes under whatever is
+      // already there.
       try { placed.moveToEnd(); } catch (e) {}
       placed.selected = true;
       return comp.name + ' added · ' + count + blending;
     }
 
-    // Built straight into the comp — keep the stack together at the bottom,
-    // in the order it was assembled.
-    made.sort(function (a, b) { return a.index - b.index; });
-    for (var m = 0; m < made.length; m++) { try { made[m].moveToEnd(); } catch (e) {} }
+    // The matte has to sit directly above what it cuts on every AE version,
+    // whether or not this one has the newer track-matte API.
+    try { matte.moveBefore(placed); } catch (e) {}
+    if (!trackMatte(placed, matte)) {
+      throw new Error('This After Effects version would not accept a track matte — ' +
+                      'set “' + matte.name + '” as an alpha matte for “' + placed.name + '” by hand.');
+    }
 
-    ctrl.selected = true;
-    return p.label + ' built into ' + comp.name + ' · ' + count + blending;
+    placed.selected = true;
+    return GF.Geom.sourceFor(mode).label + ' gradient added · ' + count +
+           ' · matted by ' + matte.name + blending;
+  }
+
+  /** AE 23 replaced the track-matte property with a method; support both. */
+  function trackMatte(layer, matte) {
+    try {
+      if (typeof layer.setTrackMatte === 'function') {
+        layer.setTrackMatte(matte, TrackMatteType.ALPHA);
+        return true;
+      }
+    } catch (e) {}
+    try {
+      layer.trackMatteType = TrackMatteType.ALPHA;
+      return true;
+    } catch (e2) {}
+    return false;
   }
 
   /* ====================================================================== */

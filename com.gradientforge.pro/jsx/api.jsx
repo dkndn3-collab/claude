@@ -31,6 +31,9 @@ $.global.GF = $.global.GF || {};
   GF.api = function (action, paramsJson) {
     try {
       if (action === 'ping') return 'OK|' + ping();
+      // Read-only, called on a timer: it must never open an undo group and
+      // never throw, or a disabled button loses the reason it is disabled.
+      if (action === 'selection') return 'OK|' + GF.Geom.probeAll();
 
       var params = {};
       if (paramsJson) {

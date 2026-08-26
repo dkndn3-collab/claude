@@ -22,7 +22,11 @@
     allFilters: false,
     selected: -1,
     query: '',
-    output: { precomp: true, name: '' }
+    output: { precomp: true, name: '' },
+    // What the host says is selected right now. Null until the first probe
+    // answers — a button cannot claim a reason it has not been given.
+    host: null,
+    busy: false
   };
   var reduceMotion = false;
   try { reduceMotion = global.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -125,6 +129,7 @@
     // The action bar lives outside the scroller, so it never scrolls away.
     el.create = document.getElementById('gfCreate');
     el.copy = document.getElementById('gfCopy');
+    el.hint = document.getElementById('gfHint');
     el.shuffle = view.querySelector('#gfShuffle');
 
     el.shuffle.addEventListener('click', shuffle);
@@ -170,6 +175,9 @@
         state.params.mode = m.id;
         // The visible slider set is what changes per mode — not its length.
         renderModes(); renderSliders(); renderGeometry(); renderAdvanced(); refresh();
+        // A different tab asks the host a different question — ask it now
+        // rather than at the next tick, so Create updates with the tab.
+        probeHost();
       });
       el.modes.appendChild(b);
     });
@@ -621,11 +629,7 @@
     el.contrast.textContent = read.note;
     el.contrast.className = 'note' + (read.ok ? '' : ' warn');
 
-    // The After Effects build is the mesh engine. A geometry mode has no native
-    // equivalent yet, so Create says so instead of quietly building a mesh.
-    var native = p.mode === 'mesh';
-    el.create.disabled = !native;
-    el.create.title = native ? '' : 'The After Effects build covers Mesh so far — geometry modes are preview-only.';
+    syncCreate();
 
     if (!el.pen.hidden) drawPen();
 
@@ -643,9 +647,85 @@
       ' · the layer stack is solids, native effects and expressions — nothing is imported.';
   }
 
-  /* ---------------------------------------------------------------- build */
+  /* ------------------------------------------------------- geometry sources */
 
-  function payload() {
+  /**
+   * One interface, three tabs (§3 of the change request):
+   *
+   *     geometry = activeSource().getGeometry()
+   *     if (!geometry.isValid) → show the reason, stop
+   *     applyGradient(geometry, readSharedParams())
+   *
+   * Create never branches on which tab is open. Each source answers for itself,
+   * and a source with nothing to build from answers with the sentence the user
+   * needs to read — never with silence, and never by quietly building a mesh
+   * instead of what the tab promised.
+   *
+   * Validity is the host's call, not the panel's: geometry.jsx probes the real
+   * selection and hands back the same reasons, so the disabled button and the
+   * refused build can never disagree.
+   */
+
+  var OFFLINE = 'No After Effects here — the geometry tabs build from a layer in the timeline.';
+  var WAITING = 'Looking for After Effects…';
+
+  function hostSays(mode) {
+    var h = state.host;
+    if (!h) return { valid: false, reason: WAITING };
+    if (h.offline) {
+      return mode === 'mesh' ? { valid: true, reason: '' } : { valid: false, reason: OFFLINE };
+    }
+    if (!h.comp) return { valid: false, reason: 'Open a composition first, then try again.' };
+    return h[mode] || { valid: false, reason: 'This tab has no source in the host build.' };
+  }
+
+  /** The shared half of every answer, so the three below only add their own. */
+  function answer(mode, extra) {
+    var r = hostSays(mode);
+    var out = { kind: mode, isValid: !!r.valid, reason: r.reason || '', detail: r.detail || '' };
+    for (var k in extra) if (extra.hasOwnProperty(k)) out[k] = extra[k];
+    return out;
+  }
+
+  var SOURCES = {
+    /** No geometry: the gradient is the frame. Valid whenever a comp is open. */
+    mesh: {
+      id: 'mesh',
+      getGeometry: function () { return answer('mesh', {}); }
+    },
+
+    /** A mask path the user already drew, read from the timeline. */
+    curve: {
+      id: 'curve',
+      getGeometry: function () {
+        var p = state.params;
+        return answer('curve', {
+          spread: p.spread,
+          direction: p.direction,
+          fill: !!p.fill,
+          seam: p.seam
+        });
+      }
+    },
+
+    /** A text layer the user already set. */
+    letter: {
+      id: 'letter',
+      getGeometry: function () {
+        var p = state.params;
+        return answer('letter', {
+          spread: p.spread,
+          direction: p.direction,
+          perLetter: p.perLetter
+        });
+      }
+    }
+  };
+
+  function activeSource() { return SOURCES[state.params.mode] || SOURCES.mesh; }
+
+  /** Everything that is the same in every tab: palette, motion, loop, output. */
+  function readSharedParams() {
     var out = G.resolve(JSON.parse(JSON.stringify(state.params)));
     out.precomp = !!state.output.precomp;
     out.name = (state.output.name || '').trim();
@@ -654,13 +734,69 @@
     return out;
   }
 
-  function create() {
-    el.create.disabled = true;
+  function applyGradient(geometry, params) {
+    // The tab's answer wins over anything resolve() guessed about geometry.
+    for (var k in geometry) if (geometry.hasOwnProperty(k)) params.geometry[k] = geometry[k];
+    params.geometry.mode = geometry.kind;
+    params.mode = geometry.kind;
+
+    state.busy = true;
+    syncCreate();
     setStatus('Building gradient…', 'busy');
-    global.CEP.call('gradient', payload())
+    return global.CEP.call('gradient', params)
       .then(function (msg) { setStatus(msg || 'Gradient created', 'ok'); })
       .catch(function (err) { setStatus(err.message || 'Could not build the gradient', 'err'); })
-      .then(function () { el.create.disabled = false; });
+      .then(function () { state.busy = false; probeHost(); });
+  }
+
+  function create() {
+    var geometry = activeSource().getGeometry();
+    if (!geometry.isValid) { setStatus(geometry.reason, 'err'); return; }
+    applyGradient(geometry, readSharedParams());
+  }
+
+  /* ------------------------------------------------- what the host can see */
+
+  /**
+   * Selection changes under the panel with no event to listen for, so the panel
+   * asks. It is a read-only call: no undo group, nothing built, and a failure
+   * only costs one tick.
+   */
+  var probeTimer = null;
+
+  function probeHost() {
+    if (global.CEP.isMock) {
+      state.host = { offline: true };
+      syncCreate();
+      return Promise.resolve();
+    }
+    return global.CEP.call('selection', {}).then(function (json) {
+      try { state.host = JSON.parse(json); } catch (e) { state.host = { comp: null }; }
+    }, function () {
+      state.host = { comp: null };
+    }).then(syncCreate);
+  }
+
+  function watchHost(on) {
+    clearInterval(probeTimer);
+    if (!on) return;
+    probeHost();
+    if (!global.CEP.isMock) probeTimer = setInterval(probeHost, 1500);
+  }
+
+  /** Create's enabled state and the line under it are one decision. */
+  function syncCreate() {
+    var g = activeSource().getGeometry();
+    var blocked = !g.isValid;
+
+    el.create.disabled = blocked || state.busy;
+    el.create.title = blocked ? g.reason : 'Build this gradient in After Effects';
+    el.create.setAttribute('aria-disabled', String(blocked));
+
+    var line = blocked ? g.reason : (g.detail ? 'Builds from ' + g.detail : '');
+    el.hint.textContent = line;
+    el.hint.hidden = !line;
+    el.hint.setAttribute('data-state', blocked ? 'blocked' : 'ready');
   }
 
   function freeze() {
@@ -722,10 +858,14 @@
     global.CEP.onThemeChange(applyHostTheme);
     build(document.getElementById('view'));
 
-    // The preview is a live render; pause it when the panel is not on screen.
+    // The preview is a live render and the probe is a live question; both stop
+    // when the panel is not on screen.
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) PV.stopAll(); else refresh();
+      if (document.hidden) { PV.stopAll(); watchHost(false); }
+      else { refresh(); watchHost(true); }
     });
+
+    watchHost(true);
 
     if (global.CEP.isMock) { setStatus('Preview mode — no After Effects host detected'); return; }
     global.CEP.call('ping', {})

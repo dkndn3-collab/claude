@@ -87,6 +87,80 @@ GF.U = (function () {
     return fx;
   };
 
+  /* ------------------------------------------------------------ selection */
+
+  /** The layers the user has selected, or [] — never throws on an empty comp. */
+  U.selectedLayers = function (comp) {
+    try { return comp.selectedLayers || []; } catch (e) { return []; }
+  };
+
+  /** Every mask on a layer, in timeline order. */
+  U.masksOf = function (layer) {
+    var out = [];
+    try {
+      var group = layer.property('ADBE Mask Parade');
+      if (!group) return out;
+      for (var i = 1; i <= group.numProperties; i++) out.push(group.property(i));
+    } catch (e) {}
+    return out;
+  };
+
+  /**
+   * The mask the user means. An explicitly selected mask wins; otherwise the
+   * first mask on the first selected layer that has one. Returns null rather
+   * than throwing, because the panel asks this question on a timer.
+   */
+  U.pickMask = function (comp) {
+    var i, j, sel;
+    try {
+      sel = comp.selectedProperties || [];
+      for (i = 0; i < sel.length; i++) {
+        var p = sel[i], hops = 0;
+        // A selected mask path, or the mask group itself — walk up to the mask.
+        while (p && hops++ < 4) {
+          if (p.matchName === 'ADBE Mask Atom') {
+            return { layer: p.propertyGroup(p.propertyDepth), mask: p };
+          }
+          try { p = p.parentProperty; } catch (e2) { p = null; }
+        }
+      }
+    } catch (e3) {}
+
+    var layers = U.selectedLayers(comp);
+    for (i = 0; i < layers.length; i++) {
+      var masks = U.masksOf(layers[i]);
+      for (j = 0; j < masks.length; j++) {
+        // A mask set to None still draws a path — it just isn't cutting anything.
+        return { layer: layers[i], mask: masks[j] };
+      }
+    }
+    return null;
+  };
+
+  U.isText = function (layer) {
+    try { return !!layer.property('ADBE Text Properties'); } catch (e) { return false; }
+  };
+
+  /** The first selected text layer, or null. */
+  U.pickText = function (comp) {
+    var layers = U.selectedLayers(comp);
+    for (var i = 0; i < layers.length; i++) if (U.isText(layers[i])) return layers[i];
+    return null;
+  };
+
+  /** ExtendScript has no JSON — this is the only escaping the replies need. */
+  U.quote = function (s) {
+    s = String(s == null ? '' : s);
+    var out = '', c;
+    for (var i = 0; i < s.length; i++) {
+      c = s.charAt(i);
+      if (c === '"' || c === '\\') out += '\\' + c;
+      else if (c < ' ') out += ' ';
+      else out += c;
+    }
+    return '"' + out + '"';
+  };
+
   /* --------------------------------------------------------------- effects */
 
   U.fastBlur = function (layer, amount, expr) {
