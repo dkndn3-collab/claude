@@ -331,7 +331,7 @@
   }
 
   var GEOM_KEYS = ['spread', 'direction', 'offset', 'path', 'nodes', 'closed',
-                   'text', 'font', 'textSize', 'tracking', 'perLetter'];
+                   'text', 'font', 'textSize', 'tracking', 'depth', 'softness', 'style'];
   function geometryOf(p) {
     var out = {};
     GEOM_KEYS.forEach(function (k) { out[k] = p[k]; });
@@ -543,7 +543,11 @@
       }
     },
 
-    /** A text layer the user already set. */
+    /**
+     * A layer the user already has — its alpha becomes the gradient's shape and
+     * its edges become the volume. A text layer is the case this is for, and it
+     * is the one that can hand the preview its actual words.
+     */
     letter: {
       id: 'letter',
       getGeometry: function () {
@@ -551,7 +555,9 @@
         return answer('letter', {
           spread: p.spread,
           direction: p.direction,
-          perLetter: p.perLetter
+          depth: p.depth,
+          softness: p.softness,
+          style: p.style
         });
       }
     }
@@ -612,7 +618,7 @@
       try { state.host = JSON.parse(json); } catch (e) { state.host = { comp: null }; }
     }, function () {
       state.host = { comp: null };
-    }).then(adoptPath).then(syncCreate);
+    }).then(adoptPath).then(adoptType).then(syncCreate);
   }
 
   /**
@@ -622,6 +628,29 @@
    * the same mask because there is only one copy of it, and it came from the
    * timeline. Editing the mask in After Effects shows up here on the next tick.
    */
+  /**
+   * Take the selected text layer's own words, family and size.
+   *
+   * The panel cannot read After Effects' glyph outlines, so it re-sets the same
+   * string in the browser's text engine — but it should at least be the same
+   * string. A layer that is not type has no words to lend, and the preview
+   * falls back to its name so there is still a shape to judge.
+   */
+  function adoptType() {
+    if (state.params.mode !== 'letter') return;
+    var l = (state.host && state.host.letter) || {};
+    var next = l.type || (l.detail ? { text: l.detail, font: '', size: 26, tracking: 0 } : null);
+    if (!next) return;
+    var p = state.params;
+    if (p.text === next.text && p.font === next.font &&
+        Math.abs(p.textSize - next.size) < 0.01 && p.tracking === next.tracking) return;
+    p.text = next.text;
+    p.font = next.font;
+    p.textSize = Math.max(2, Math.min(90, next.size));
+    p.tracking = next.tracking;
+    refresh();
+  }
+
   function adoptPath() {
     if (state.params.mode !== 'curve') return;
     var curve = (state.host && state.host.curve) || {};

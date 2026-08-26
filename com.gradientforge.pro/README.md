@@ -175,7 +175,7 @@ geometry source  →  raster  →  seed  →  jump flood  →  SDF  →  coordin
 | Mode | Geometry | Controls |
 |---|---|---|
 | **Curve** | A **mask path from the timeline**, picked in Path ▾ | **Spread** sets the falloff distance, not a rendered stroke; **Offset** moves the edge it is measured from |
-| **Letter** | Text, any system font, multi-line | **Per letter** — 0 runs one ramp across the whole word, 100 gives every glyph its own |
+| **Letter** | **A layer from the timeline** — its alpha is the shape | **Depth** and **Softness** give it volume; **Style** picks Surface or Refract |
 
 **Shape was removed in v0.4.** It generated its own rectangles and ellipses
 inside the plugin, and After Effects already makes those better with a mask —
@@ -250,6 +250,57 @@ matte gives the shape and the mesh gives the colour, and getting a true `d`/`t`
 ramp into After Effects needs a scriptable multi-stop gradient, which — see
 *Limits* — it does not have. Spread, Offset and closure all reach the build.
 
+### Letter has volume
+
+The Letter tab does not author anything either. It takes **a layer**, not a text
+layer — the pipeline only ever reads an alpha channel, so a shape layer or a
+masked solid works exactly as well, and that is what the code calls it. A text
+layer is the case it is for, and it is the only one that can hand the preview
+its actual words, family and size, which it does: the preview sets the type that
+is really in the comp instead of a placeholder the user had to type twice.
+
+Volume comes out of two stock effects and nothing else:
+
+```
+GF MATTE — Letter    the alpha, filled white, CRISP — an alpha matte
+GRADIENT — …         the colour field · CC Glass  (+ Displacement Map in Refract)
+GF HEIGHT — Letter   the alpha, filled white, blurred by Softness · switched off
+```
+
+The height field is the layer's own alpha blurred by **Softness** — flat in the
+middle of a stroke, falling off across its edge, so its slope is steepest
+exactly where the edge is. That is the whole trick: CC Glass differentiates that
+field into surface normals internally, and the bevel comes from the normals.
+
+- **Surface** — the normals *light* the gradient. Diffuse and specular, so the
+  edges catch and the middle stays flat. Embossed type.
+- **Refract** — the normals *push* it. Displacement Map for the broad bend, CC
+  Glass for the sharp lip. Type cut out of glass.
+
+**Depth** drives both, and it scales the *slope*, not the height, so turning it
+up sharpens the bevel instead of inflating the glyph. The height layer is
+switched off: After Effects reads a map layer whether or not it is visible, and
+a white slab of type on top of the gradient is not what anyone asked for.
+
+The preview reproduces this rather than approximating it — the SDF already *is*
+a height field, so the same normals fall out of it by sampling, which is the
+same derivative CC Glass takes. One detail is worth stating because getting it
+wrong makes the whole feature invisible: the shading is **normalised so a flat
+surface comes out at exactly 1.0**. Without that the light points mostly at the
+viewer, every flat pixel is already fully lit, and tilting the edges has almost
+nothing left to give. Normalised, a flat interior keeps the colour it had and
+only the slopes move — up on the lit side, down on the other. That contrast is
+the volume. Measured: the edges shift 2.7 % of luminance against flat type,
+peaking at 56/255, and **28×** more than the areas away from them.
+
+The preview also composites through the glyph coverage over a neutral ground,
+because that is what the build does with its track matte — a full-frame ramp
+would have been showing something the comp never renders.
+
+**Per letter is deferred.** It chose between one ramp per glyph and one ramp
+across the word; the run now always reads as one gradient, and the volume
+pipeline was the part worth shipping first.
+
 ### Verified
 
 Measured against an analytic circle over 21,888 samples: **max error 0.7 px,
@@ -279,8 +330,7 @@ applyGradient(geometry, readSharedParams())
 ```
 
 Each source answers for itself — Mesh has no geometry and is valid whenever a
-comp is open; Curve wants a mask path in the timeline; Letter wants a text
-layer. Validity is the *host's* call (`jsx/geometry.jsx` probes the real
+comp is open; Curve wants a mask path in the timeline; Letter wants a layer. Validity is the *host's* call (`jsx/geometry.jsx` probes the real
 selection on a 1.5 s timer), so the disabled button and the refused build can
 never disagree: they quote the same sentence. A blocked **Create** prints its
 reason under the button rather than only in a tooltip, and pressing it never
@@ -290,9 +340,11 @@ The colour field is identical in all three: same points, same orbits, same
 loop. What Curve and Letter add is a **track matte** built from the user's own
 layer — a duplicate with native effects on it, never a rasterised copy. Curve
 fills a closed mask or strokes an open one (the one native way to get pixels out
-of an open path); Letter uses the glyph alpha. Either way a blurred edge, driven
-by live **Spread** and **Offset** sliders on the matte, is what turns the
-outline into a ramp. The user's own layer is never modified.
+of an open path); Letter uses the layer's alpha. The user's own layer is never
+modified — every one of these is a duplicate. Curve's edge is then blurred by
+live **Spread** and **Offset** sliders on the matte, which is what turns the
+outline into a ramp; Letter's stays crisp, because its volume lives inside the
+shape rather than on its silhouette.
 
 ---
 
@@ -465,6 +517,11 @@ not apply, so the library is in.
   Soft points over a base colour read the same way at normal Blend values; at
   very low Blend the topmost point dominates more than the preview shows.
 - **OKLab compositing is preview-only**, for the reason given under Colour.
+- **Direction is preview-only in the native build.** The matte gives the shape
+  and the mesh gives the colour; a true `d`/`t` ramp in After Effects needs a
+  scriptable multi-stop gradient, which — see below — it does not have. Spread,
+  Offset, closure, Depth, Softness and Style all reach the build.
+- **Per letter is deferred**, as above.
 - **Magnetic and Contour** (§5.1 v2.0) need genuinely new code and are not here.
   Linear / Radial / Conic and the Metaball look are parameter restrictions of
   this engine and are not yet shipped as presets.

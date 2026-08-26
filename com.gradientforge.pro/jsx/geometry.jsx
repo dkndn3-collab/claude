@@ -75,6 +75,24 @@ GF.Geom = (function () {
 
   var WHITE = [1, 1, 1, 1];
 
+  function firstOfType(effect, type) {
+    if (!effect) return null;
+    var all = leaves(effect);
+    for (var i = 0; i < all.length; i++) {
+      try { if (all[i].propertyValueType === type) return all[i]; } catch (e) {}
+    }
+    return null;
+  }
+
+  function uniqueName(comp, base) {
+    var taken = {}, i;
+    for (i = 1; i <= comp.numLayers; i++) taken[comp.layer(i).name] = true;
+    if (!taken[base]) return base;
+    var n = 2;
+    while (taken[base + ' ' + n]) n++;
+    return base + ' ' + n;
+  }
+
   function stripEffects(layer) {
     try {
       var parade = layer.property('ADBE Effect Parade');
@@ -250,35 +268,159 @@ GF.Geom = (function () {
   /* letter — a text layer already in the timeline                          */
   /* ====================================================================== */
 
-  var LETTER_REASON = 'Select a text layer first — the gradient fills the type you already have.';
+  var LETTER_REASON = 'Select a text layer first — its type becomes the gradient, ' +
+                      'and its edges become the volume. Any layer with an alpha works.';
+
+  /**
+   * The layer whose alpha the gradient takes. A text layer is what this is for
+   * and what wins when several are selected, but the pipeline only ever reads
+   * an alpha channel, so a shape layer or a masked solid works exactly as well
+   * — which is why the source is a layer, not a text layer, in the code.
+   */
+  function pickLayer(comp) {
+    var t = U.pickText(comp);
+    if (t) return t;
+    var layers = U.selectedLayers(comp);
+    for (var i = 0; i < layers.length; i++) {
+      // A null has no pixels, so it has no alpha to take.
+      try { if (!layers[i].nullLayer) return layers[i]; } catch (e) { return layers[i]; }
+    }
+    return null;
+  }
 
   var letter = {
     id: 'letter',
     label: 'Letter',
 
     probe: function (comp) {
-      var t = U.pickText(comp);
-      if (!t) return { valid: false, reason: LETTER_REASON };
-      var name = '';
-      try { name = t.name; } catch (e) {}
-      return { valid: true, reason: '', detail: name };
+      var l = pickLayer(comp);
+      if (!l) return { valid: false, reason: LETTER_REASON };
+      var out = { valid: true, reason: '', detail: '' };
+      try { out.detail = l.name; } catch (e) {}
+      // A text layer can hand the preview its actual words; nothing else can,
+      // and the panel is told which case it is looking at.
+      out.type = U.isText(l) ? U.textOf(comp, l) : null;
+      out.isText = !!out.type;
+      return out;
     },
 
     read: function (comp) {
-      var t = U.pickText(comp);
-      if (!t) throw new Error(LETTER_REASON);
-      return { kind: 'letter', layer: t, label: t.name };
+      var l = pickLayer(comp);
+      if (!l) throw new Error(LETTER_REASON);
+      return { kind: 'letter', layer: l, label: l.name, isText: U.isText(l) };
     },
 
-    matte: function (comp, source, p) {
-      var layer = copyOf(source.layer, 'GF MATTE — Letter');
-      // The glyphs' own alpha is the matte; Fill only guarantees it is opaque
-      // white, so a coloured or semi-transparent original still mattes cleanly.
+    /**
+     * The matte stays crisp. Softening it would blur the type itself, and the
+     * volume this mode is for lives *inside* the shape, not on its silhouette.
+     */
+    matte: function (comp, source) {
+      var layer = copyOf(source.layer, uniqueName(comp, 'GF MATTE — Letter'));
+      // Fill only guarantees the alpha is opaque white, so a coloured or
+      // semi-transparent original still mattes cleanly.
       set(colorOf(fx(layer, 'ADBE Fill', 'Matte')), WHITE);
-      spreadControl(layer, p.geometry);
       return layer;
+    },
+
+    /**
+     * Volume, out of two stock effects and nothing else.
+     *
+     * A height field is the layer's own alpha, filled white and blurred by
+     * **Softness** — flat in the middle of a glyph, falling off across its
+     * edge, so its slope is steepest exactly where the edge is. That is the
+     * whole trick: CC Glass differentiates that field into surface normals
+     * internally, which is where the bevel comes from.
+     *
+     *   Surface  the normals light the gradient — diffuse and specular, so the
+     *            edges catch and the middle stays flat. Reads as embossed type.
+     *   Refract  the normals push the gradient instead — Displacement Map for
+     *            the broad bend, CC Glass for the sharp lip at the edge. Reads
+     *            as type cut out of glass.
+     *
+     * Depth drives both. The height layer is switched off: After Effects reads
+     * a map layer whether or not it is visible, and a white slab of type on top
+     * of the gradient is not what anyone asked for.
+     */
+    shade: function (comp, source, p, placed) {
+      var geom = p.geometry || {};
+      var depth = geom.depth == null ? 55 : geom.depth;
+      var refract = geom.style === 'refract';
+
+      var name = uniqueName(comp, 'GF HEIGHT — Letter');
+      var height = copyOf(source.layer, name);
+      set(colorOf(fx(height, 'ADBE Fill', 'Height')), WHITE);
+
+      U.slider(height, 'Depth', depth);
+      U.slider(height, 'Softness', geom.softness == null ? 30 : geom.softness);
+      var blur = U.fastBlur(height, 8,
+        'thisComp.height * (0.002 + effect("Softness")(1)/100 * 0.045)');
+      try { blur.name = 'Softness blur'; } catch (e) {}
+      height.enabled = false;
+      try { height.moveToEnd(); } catch (e) {}
+
+      var R = function (which) {
+        return 'thisComp.layer("' + name + '").effect("' + which + '")(1)';
+      };
+      var D = R('Depth');
+
+      // Refract's broad bend: the height itself pushes the gradient sideways.
+      if (refract) {
+        var dm = fx(placed, 'ADBE Displacement Map', 'Refraction');
+        if (dm) {
+          set(firstOfType(dm, PropertyValueType.LAYER_INDEX), heightIndex(comp, height));
+          set(prop(dm, 2, 'ADBE Displacement Map-0002'), 4);        // horizontal ← luminance
+          expr(prop(dm, 3, 'ADBE Displacement Map-0003'),
+               D + '/100 * thisComp.height * 0.10');
+          set(prop(dm, 4, 'ADBE Displacement Map-0004'), 4);        // vertical ← luminance
+          expr(prop(dm, 5, 'ADBE Displacement Map-0005'),
+               D + '/100 * thisComp.height * 0.10');
+          set(prop(dm, 7, 'ADBE Displacement Map-0007'), 2);        // repeat edge pixels
+        }
+      }
+
+      var glass = fx(placed, 'CC Glass', refract ? 'Refract' : 'Surface');
+      if (!glass) return height;
+
+      set(firstOfType(glass, PropertyValueType.LAYER_INDEX), heightIndex(comp, height));
+      set(byName(glass, 'Property'), 5);                             // read Lightness
+      expr(byName(glass, 'Softness'),
+           'thisComp.layer("' + name + '").effect("Softness")(1)/100 * 12');
+      expr(byName(glass, 'Height'), D + '/100 * ' + (refract ? '45' : '80'));
+      expr(byName(glass, 'Displacement'), D + '/100 * ' + (refract ? '70' : '12'));
+
+      // Shading: Surface lights the edges, Refract mostly bends and only
+      // catches a thin specular lip so the glass reads as glass.
+      set(byName(glass, 'Light Intensity'), refract ? 62 : 100);
+      set(byName(glass, 'Light Angle'), -60);
+      set(byName(glass, 'Light Height'), refract ? 40 : 62);
+      set(byName(glass, 'Ambient'), refract ? 78 : 52);
+      set(byName(glass, 'Diffuse'), refract ? 22 : 58);
+      set(byName(glass, 'Specular'), refract ? 26 : 42);
+      set(byName(glass, 'Roughness'), refract ? 0.02 : 0.08);
+      set(byName(glass, 'Metal'), refract ? 18 : 44);
+
+      return height;
     }
   };
+
+  /** CC Glass and Displacement Map both want the map layer's index. */
+  function heightIndex(comp, layer) {
+    try { return layer.index; } catch (e) { return 1; }
+  }
+
+  /**
+   * Cycore effects are addressed by their visible parameter names — they have
+   * no stable ADBE-style match names — so this is a name lookup with a
+   * depth-first walk, and a miss costs one parameter rather than the build.
+   */
+  function byName(effect, label) {
+    if (!effect) return null;
+    var all = leaves(effect);
+    for (var i = 0; i < all.length; i++) {
+      try { if (all[i].name === label) return all[i]; } catch (e) {}
+    }
+    return null;
+  }
 
   /* ====================================================================== */
 
@@ -327,6 +469,19 @@ GF.Geom = (function () {
         if (geom) {
           body += ',"closed":' + (geom.closed ? 'true' : 'false') +
                   ',"nodes":' + U.nodesJSON(geom.nodes);
+        }
+      }
+      // Letter hands the preview the words that are actually in the comp — the
+      // panel cannot read glyph outlines, but it can at least set the same type.
+      if (id === 'letter') {
+        body += ',"isText":' + (r.isText ? 'true' : 'false');
+        if (r.type) {
+          body += ',"type":{"text":' + U.quote(r.type.text) +
+                  ',"font":' + U.quote(r.type.font) +
+                  ',"size":' + (Math.round(r.type.size * 100) / 100) +
+                  ',"tracking":' + (Math.round(r.type.tracking * 100) / 100) + '}';
+        } else {
+          body += ',"type":null';
         }
       }
       out.push('"' + id + '":{' + body + '}');

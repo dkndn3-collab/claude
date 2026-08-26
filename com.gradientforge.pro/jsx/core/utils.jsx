@@ -232,6 +232,45 @@ GF.U = (function () {
     return '[' + out.join(',') + ']';
   };
 
+  /* ------------------------------------------------------------ text layers */
+
+  /**
+   * The type on a text layer, as the panel's rasteriser needs it.
+   *
+   * The panel cannot read After Effects' glyph outlines, so it re-sets the same
+   * string in the browser's own text engine. Reading the string, family and
+   * size from the layer is what keeps the two close: the preview shows the
+   * words that are actually in the comp, not a placeholder the user typed
+   * twice. Size comes back as a percentage of frame height, which is the unit
+   * the panel's Text size has always been in.
+   */
+  U.textOf = function (comp, layer) {
+    var doc;
+    try { doc = layer.property('ADBE Text Properties').property('ADBE Text Document').value; }
+    catch (e) { return null; }
+    if (!doc) return null;
+
+    function pick(names, fallback) {
+      for (var i = 0; i < names.length; i++) {
+        try {
+          var v = doc[names[i]];
+          if (v !== undefined && v !== null && v !== '') return v;
+        } catch (e2) {}
+      }
+      return fallback;
+    }
+
+    var size = Number(pick(['fontSize'], 60)) || 60;
+    return {
+      text: String(pick(['text'], '')),
+      // fontFamily is the human name a browser can match; font is the
+      // PostScript name, which it usually cannot.
+      font: String(pick(['fontFamily', 'font'], '')),
+      size: size / (comp.height || 1) * 100,
+      tracking: Number(pick(['tracking'], 0)) || 0
+    };
+  };
+
   /** ExtendScript has no JSON — this is the only escaping the replies need. */
   U.quote = function (s) {
     s = String(s == null ? '' : s);

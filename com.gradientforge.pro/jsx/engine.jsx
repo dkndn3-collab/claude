@@ -329,11 +329,20 @@ GF.Gradient = (function () {
                       'set “' + matte.name + '” as an alpha matte for “' + placed.name + '” by hand.');
     }
 
+    // Some sources do more than cut a hole: Letter builds a height field and
+    // lights the gradient through it. This runs after the matte is wired, so
+    // the effects it adds sit under a stack that is already correct.
+    var extra = '';
+    if (typeof source.shade === 'function') {
+      var made = source.shade(parent, geometry, p, placed);
+      if (made) extra = ' · ' + made.name;
+    }
+
     placed.selected = true;
     // Name the source: the user picked it from a list, so the confirmation has
     // to say which one it actually built from.
     return GF.Geom.sourceFor(mode).label + ' gradient added · ' +
-           (geometry.label ? geometry.label + ' · ' : '') + count + blending;
+           (geometry.label ? geometry.label + ' · ' : '') + count + extra + blending;
   }
 
   /** AE 23 replaced the track-matte property with a method; support both. */

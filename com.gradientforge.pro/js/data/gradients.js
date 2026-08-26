@@ -247,13 +247,15 @@
 
   var GEOMETRY_MODES = ['curve', 'letter'];
 
-  var FONT_OPTS = [
-    { value: '',                    label: 'System' },
-    { value: 'Georgia',             label: 'Georgia' },
-    { value: 'Times New Roman',     label: 'Times' },
-    { value: 'Helvetica Neue',      label: 'Helvetica' },
-    { value: 'Impact',              label: 'Impact' },
-    { value: 'Courier New',         label: 'Courier' }
+  /**
+   * Two readings of the same height field. Surface lights the gradient through
+   * it — embossed type. Refract pushes the gradient through it instead — type
+   * cut out of glass. Both come from CC Glass in the build and from the same
+   * normals in the preview.
+   */
+  var STYLE_OPTS = [
+    { value: 'surface', label: 'Surface' },
+    { value: 'refract', label: 'Refract' }
   ];
 
   /**
@@ -274,9 +276,14 @@
     { key: 'offset', label: 'Offset', type: 'number', value: 0, min: -100, max: 100, step: 1,
       group: 'main', modes: ['curve'],
       blurb: 'moves the edge the ramp is measured from — in, or out' },
-    { key: 'perLetter', label: 'Per letter', type: 'number', value: 0, min: 0, max: 100, step: 1,
+    /* Per letter is deferred: it was one ramp per glyph against one ramp across
+       the word, and the volume pipeline is the thing worth shipping first. */
+    { key: 'depth', label: 'Depth', type: 'number', value: 55, min: 0, max: 100, step: 1,
       group: 'main', modes: ['letter'],
-      blurb: '0 = one ramp across the word · 100 = a full ramp per glyph' },
+      blurb: 'how far the edges stand off the surface' },
+    { key: 'softness', label: 'Softness', type: 'number', value: 30, min: 0, max: 100, step: 1,
+      group: 'main', modes: ['letter'],
+      blurb: 'how wide the bevel is — sharp lip, or a rolled edge' },
     { key: 'flow',   label: 'Flow',   type: 'number', value: 28, min: 0, max: 100, step: 1, group: 'main',
       advancedIn: ['letter'], blurb: 'how much the shape bends and drifts' },
     /* `advancedIn` is how a control steps back without disappearing: it is a
@@ -288,10 +295,6 @@
 
     { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1,
       group: 'advanced', modes: ['mesh'] },
-    { key: 'textSize', label: 'Text size', type: 'number', value: 26, min: 5, max: 60, step: 1,
-      group: 'advanced', modes: ['letter'] },
-    { key: 'tracking', label: 'Tracking', type: 'number', value: 0, min: -20, max: 60, step: 1,
-      group: 'advanced', modes: ['letter'] },
     { key: 'loop',       label: 'Loop', type: 'number', value: 12, min: 2, max: 60, step: 1, unit: 's', group: 'advanced' },
     { key: 'seed',       label: 'Seed',        type: 'number', value: 431, min: 1, max: 9999, step: 1, group: 'advanced' },
     { key: 'colorSpace', label: 'Space', type: 'select', value: 'oklab', options: SPACE_OPTS, group: 'advanced' },
@@ -300,9 +303,7 @@
     /* Geometry row — shown only while a geometry mode is active. The Curve
        tab's Path ▾ is built at render time instead, because its options are
        whatever masks the comp has at that moment. */
-    { key: 'text',  label: 'Text',  type: 'text', value: 'Gradient',
-      group: 'geometry', modes: ['letter'], placeholder: 'Type something' },
-    { key: 'font',  label: 'Font',  type: 'select', value: '', options: FONT_OPTS,
+    { key: 'style', label: 'Style', type: 'select', value: 'surface', options: STYLE_OPTS,
       group: 'geometry', modes: ['letter'] }
   ];
 
@@ -371,6 +372,12 @@
     out.path = '';
     out.nodes = [];
     out.closed = false;
+    // Letter's type is the selected layer's, read back from After Effects.
+    // These are the fallback the preview draws with when there is no host.
+    out.text = 'Gradient';
+    out.font = '';
+    out.textSize = 26;
+    out.tracking = 0;
     return out;
   }
 
@@ -471,7 +478,9 @@
         spread: p.spread,
         direction: p.direction,
         offset: p.offset,
-        perLetter: p.perLetter
+        depth: p.depth,
+        softness: p.softness,
+        style: p.style
       },
       colors: colors,
       points: points,
