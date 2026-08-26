@@ -493,8 +493,7 @@
     });
   }
 
-  var GEOM_KEYS = ['shape', 'size', 'spread', 'direction', 'shapeX', 'shapeY', 'rotate',
-                   'sides', 'inner', 'corner', 'fill', 'nodes', 'closed', 'text', 'font',
+  var GEOM_KEYS = ['spread', 'direction', 'fill', 'nodes', 'closed', 'text', 'font',
                    'textSize', 'tracking', 'perLetter', 'seam'];
   function geometryOf(p) {
     var out = {};

@@ -1,4 +1,4 @@
-# GradientForge — v0.3.0
+# GradientForge — v0.4.0
 
 A dockable After Effects panel that generates gradient backgrounds — animated or
 still — with one hard rule: **no gradient is ever an asset**.
@@ -38,6 +38,30 @@ The Gaussian core carries an inverse-quadratic tail. A bare Gaussian underflows
 far from every point, and where that happens the blend snaps between whichever
 floor wins — a visible crease. The tail never reaches zero, so distant areas
 fade into each other instead.
+
+**The weights are normalised by the largest of them, not by their sum.** This
+is the whole of the black-hole fix, and it is worth stating plainly because the
+symptom looked like a colour bug and was not:
+
+> `exp(-q)` reaches exactly 0.0 in float once `q` passes ~88. Push Blend down
+> and Separation up and every weight underflows together; `sum(w)` reaches
+> zero, and a guard like `max(sum, 1e-5)` then scales the numerator toward
+> black. The soft curved edge of each hole was the isocontour where the
+> underflow began.
+
+Dividing numerator and denominator by the largest weight leaves the mean
+identical — they scale together — but makes the largest weight exactly 1.0, so
+`sum(w) >= 1` always and no epsilon is needed anywhere. Softmax stabilisation,
+applied to the whole weight rather than only its Gaussian half. Measured on the
+old arithmetic: at `q = 73` it darkened the result by 44 %, at `q = 400` by
+98 %; the new one is flat.
+
+Three more guards stop the other route to a black pixel. Out-of-gamut OKLab maps
+to negative linear light, a negative through `pow()` on the way to sRGB comes
+back NaN, and NaN renders black — and in a 32-bit float comp it travels down the
+whole pipeline rather than stopping at the layer. So linear light is clamped at
+the OKLab→RGB exit, again at the sRGB encode, and once more at the very end with
+the `x != x` test, since this GLSL level has no `isnan`.
 
 ### The loop
 
@@ -150,9 +174,14 @@ geometry source  →  raster  →  seed  →  jump flood  →  SDF  →  coordin
 
 | Mode | Geometry | Controls |
 |---|---|---|
-| **Shape** | Ellipse · Rectangle (corner radius) · Polygon (N sides) · Star (N points, inner radius) | Size, position, rotation, **Fill** — inside the shape, or bleeding past the outline |
-| **Curve** | An open or closed bezier path, drawn with the pen | **Spread** sets the falloff distance, not a rendered stroke |
+| **Curve** | An open or closed bezier path | **Spread** sets the falloff distance, not a rendered stroke; **Fill** confines the ramp inside a closed path |
 | **Letter** | Text, any system font, multi-line | **Per letter** — 0 runs one ramp across the whole word, 100 gives every glyph its own |
+
+**Shape was removed in v0.4.** It generated its own rectangles and ellipses
+inside the plugin, and After Effects already makes those better with a mask —
+so it asked the user to work in the wrong place. Curve covers the same ground
+with geometry the user drew. Two modes were doing one job and the weaker one
+went; the SDF pipeline it was built on carries Curve and Letter unchanged.
 
 ### Two axes, one slider
 
@@ -202,11 +231,13 @@ Advanced.
 
 Measured against an analytic circle over 21,888 samples: **max error 0.7 px,
 mean 0.37 px, sign 100 % correct** on a 512 × 384 field. Frame 0 and frame
-`loopSeconds` are identical in all four modes (0–1 LSB, and that is the
+`loopSeconds` are identical in all three modes (0–1 LSB, and that is the
 time-seeded dither). At Grain 0 the 95th-percentile run of identical pixels
 along a scanline is 2–4 px in every mode. Direction 0 and 100 differ by 83/255
-in all three geometry modes. Thirty animated frames rebuild the field zero
-times.
+in both geometry modes. Thirty animated frames rebuild the field zero times.
+Across 420 Blend × Separation combinations on five palettes, and every one of
+the 400 library presets at two points in its loop, no pixel is darker than the
+darkest colour in its own palette.
 
 Known and inherent: where a pixel is equidistant from two distant parts of an
 outline — the medial axis — `t` jumps, and at high **Direction** that shows as a

@@ -241,19 +241,11 @@
    */
   var MODES = [
     { id: 'mesh',   name: 'Mesh' },
-    { id: 'shape',  name: 'Shape' },
     { id: 'curve',  name: 'Curve' },
     { id: 'letter', name: 'Letter' }
   ];
 
-  var GEOMETRY_MODES = ['shape', 'curve', 'letter'];
-
-  var SHAPE_OPTS = [
-    { value: 'ellipse', label: 'Ellipse' },
-    { value: 'rect',    label: 'Rectangle' },
-    { value: 'polygon', label: 'Polygon' },
-    { value: 'star',    label: 'Star' }
-  ];
+  var GEOMETRY_MODES = ['curve', 'letter'];
 
   var FONT_OPTS = [
     { value: '',                    label: 'System' },
@@ -279,8 +271,6 @@
       blurb: '0 = still · above 0 = animated, loop guaranteed' },
     { key: 'blend',  label: 'Blend',  type: 'number', value: 62, min: 0, max: 100, step: 1, group: 'main',
       modes: ['mesh'], blurb: 'how far the colours reach into each other' },
-    { key: 'size',   label: 'Size',   type: 'number', value: 46, min: 4, max: 140, step: 1, group: 'main',
-      modes: ['shape'], blurb: 'how much of the frame the shape covers' },
     { key: 'spread', label: 'Spread', type: 'number', value: 34, min: 1, max: 100, step: 1, group: 'main',
       modes: GEOMETRY_MODES, blurb: 'how far the ramp reaches from the outline' },
     { key: 'direction', label: 'Direction', type: 'number', value: 0, min: 0, max: 100, step: 1,
@@ -295,23 +285,11 @@
        main slider in most modes and moves under Advanced in the ones that need
        the room. Five on the surface, always. */
     { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1,
-      group: 'main', advancedIn: ['shape', 'letter'],
+      group: 'main', advancedIn: ['letter'],
       blurb: 'texture, and the dither that kills banding' },
 
     { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1,
       group: 'advanced', modes: ['mesh'] },
-    { key: 'shapeX',  label: 'Offset X', type: 'number', value: 0, min: -60, max: 60, step: 1,
-      group: 'advanced', modes: ['shape'] },
-    { key: 'shapeY',  label: 'Offset Y', type: 'number', value: 0, min: -60, max: 60, step: 1,
-      group: 'advanced', modes: ['shape'] },
-    { key: 'rotate',  label: 'Rotate', type: 'number', value: 0, min: 0, max: 360, step: 1,
-      group: 'advanced', modes: ['shape'], unit: '°' },
-    { key: 'sides',   label: 'Sides', type: 'number', value: 5, min: 3, max: 12, step: 1,
-      group: 'advanced', modes: ['shape'] },
-    { key: 'inner',   label: 'Inner', type: 'number', value: 45, min: 10, max: 90, step: 1,
-      group: 'advanced', modes: ['shape'] },
-    { key: 'corner',  label: 'Corner', type: 'number', value: 22, min: 0, max: 100, step: 1,
-      group: 'advanced', modes: ['shape'] },
     { key: 'textSize', label: 'Text size', type: 'number', value: 26, min: 5, max: 60, step: 1,
       group: 'advanced', modes: ['letter'] },
     { key: 'tracking', label: 'Tracking', type: 'number', value: 0, min: -20, max: 60, step: 1,
@@ -324,10 +302,8 @@
     { key: 'linearBlending', label: 'Linear', type: 'bool', value: true, group: 'advanced' },
 
     /* Geometry row — shown only while a geometry mode is active. */
-    { key: 'shape', label: 'Shape', type: 'select', value: 'ellipse', options: SHAPE_OPTS,
-      group: 'geometry', modes: ['shape'] },
     { key: 'fill',  label: 'Fill',  type: 'bool', value: false,
-      group: 'geometry', modes: ['shape', 'curve'] },
+      group: 'geometry', modes: ['curve'] },
     { key: 'text',  label: 'Text',  type: 'text', value: 'Gradient',
       group: 'geometry', modes: ['letter'], placeholder: 'Type something' },
     { key: 'font',  label: 'Font',  type: 'select', value: '', options: FONT_OPTS,
@@ -486,14 +462,6 @@
       // know about — the rasteriser reads this, the colour pipeline does not.
       geometry: {
         mode: p.mode || 'mesh',
-        shape: p.shape || 'ellipse',
-        size: p.size,
-        x: p.shapeX,
-        y: p.shapeY,
-        rotate: p.rotate,
-        sides: p.sides,
-        inner: p.inner,
-        corner: p.corner,
         nodes: p.nodes || [],
         closed: !!p.closed,
         text: p.text,

@@ -1,8 +1,8 @@
 /**
  * sdf.js — signed distance fields, on the GPU.
  *
- * One pipeline serves every geometry mode. A mode only decides what gets
- * rasterised; everything downstream is identical:
+ * One pipeline serves both geometry modes — Curve and Letter. A mode only
+ * decides what gets rasterised; everything downstream is identical:
  *
  *   geometry → Canvas2D raster → seed pass → jump flood → SDF texture
  *
@@ -255,60 +255,6 @@
     if (closed) ctx.closePath();
   }
 
-  /* ---- shape outlines, as polylines ------------------------------------ */
-
-  function shapeOutline(geom, w, h) {
-    var aspect = w / h;
-    var cx = (aspect * 0.5 + (geom.x || 0) / 100) * h;
-    var cy = (0.5 - (geom.y || 0) / 100) * h;
-    var r = Math.max(0.01, (geom.size || 40) / 100) * h * 0.5;
-    var rot = (geom.rotate || 0) * Math.PI / 180;
-    var pts = [];
-    var i, a;
-
-    function push(x, y) {
-      pts.push([cx + x * Math.cos(rot) - y * Math.sin(rot),
-                cy + x * Math.sin(rot) + y * Math.cos(rot)]);
-    }
-
-    if (geom.shape === 'rect') {
-      // Rounded rectangle, walked corner by corner so t runs evenly around it.
-      var hw = r, hh = r * 0.72;
-      var rad = Math.min(hw, hh) * Math.max(0, Math.min(1, (geom.corner || 0) / 100));
-      var corners = [[hw - rad, hh - rad, 0], [-hw + rad, hh - rad, Math.PI / 2],
-                     [-hw + rad, -hh + rad, Math.PI], [hw - rad, -hh + rad, -Math.PI / 2]];
-      for (i = 0; i < 4; i++) {
-        var c = corners[i];
-        for (var k = 0; k <= 24; k++) {
-          a = c[2] + (k / 24) * (Math.PI / 2);
-          push(c[0] + Math.cos(a) * rad, c[1] + Math.sin(a) * rad);
-        }
-      }
-    } else if (geom.shape === 'polygon' || geom.shape === 'star') {
-      var sides = Math.max(3, Math.round(geom.sides || 5));
-      var star = geom.shape === 'star';
-      var inner = Math.max(0.05, Math.min(0.95, (geom.inner || 45) / 100));
-      var steps = star ? sides * 2 : sides;
-      var sub = 12;                       // points per edge, so t stays smooth
-      for (i = 0; i <= steps * sub; i++) {
-        var e = Math.floor(i / sub), f = (i % sub) / sub;
-        var a0 = -Math.PI / 2 + (e / steps) * Math.PI * 2;
-        var a1 = -Math.PI / 2 + ((e + 1) / steps) * Math.PI * 2;
-        var r0 = (star && e % 2) ? r * inner : r;
-        var r1 = (star && (e + 1) % 2) ? r * inner : r;
-        var x0 = Math.cos(a0) * r0, y0 = Math.sin(a0) * r0;
-        var x1 = Math.cos(a1) * r1, y1 = Math.sin(a1) * r1;
-        push(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f);
-      }
-    } else {
-      for (i = 0; i <= 192; i++) {
-        a = (i / 192) * Math.PI * 2;
-        push(Math.cos(a) * r, Math.sin(a) * r);
-      }
-    }
-    return pts;
-  }
-
   /* ---- curve: anchors and handles into a polyline ---------------------- */
 
   function bezier(p0, c0, c1, p1, out, steps) {
@@ -394,7 +340,7 @@
   function rasterise(geom, w, h) {
     var fill = surface(w, h);
     var param = surface(w, h);
-    var mode = geom.mode || 'shape';
+    var mode = geom.mode || 'curve';
     var band = Math.max(3, Math.round(h * 0.012));
 
     if (mode === 'letter') {
@@ -424,10 +370,10 @@
       return { fill: fill.cv, param: param.cv, closed: true };
     }
 
-    var pts = mode === 'curve' ? curveOutline(geom, w, h) : shapeOutline(geom, w, h);
+    var pts = curveOutline(geom, w, h);
     if (pts.length < 2) return { fill: fill.cv, param: param.cv, closed: false };
 
-    var closed = mode === 'curve' ? !!geom.closed : true;
+    var closed = !!geom.closed;
     if (closed) {
       fill.ctx.fillStyle = '#fff';
       tracePath(fill.ctx, pts, true);
@@ -499,8 +445,7 @@
      */
     function update(geom, w, h) {
       // Everything the raster depends on, and nothing that only animates.
-      var key = JSON.stringify([geom.mode, geom.shape, geom.size, geom.x, geom.y, geom.rotate,
-                                geom.sides, geom.inner, geom.corner, geom.closed, geom.nodes,
+      var key = JSON.stringify([geom.mode, geom.closed, geom.nodes,
                                 geom.text, geom.font, geom.textSize, geom.tracking, w, h]);
       if (key === signature) return field;
       signature = key;
