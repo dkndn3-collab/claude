@@ -1,8 +1,8 @@
 /**
  * app.js — the panel.
  *
- * Two rules shape the layout. From the spec: at most four sliders on the
- * surface, preset first, and chrome that carries no colour of its own. From the
+ * Two rules shape the layout. From the spec: never more than five sliders on
+ * the surface, preset first, and chrome that carries no colour of its own. From the
  * material: the gradient is the subject, so it gets the largest, quietest
  * surface on screen and everything else recedes into thin glass around it.
  *
@@ -95,7 +95,7 @@
         '<div class="panel" id="gfAdvFields"></div>' +
         '<div class="panel" id="gfOutput"></div>' +
         '<div class="actions actions-sub">' +
-          '<button class="ghost" id="gfFreeze" title="Freeze the selected gradient layer at the playhead">Export still frame</button>' +
+          '<button class="ghost" id="gfFreeze">Export still frame</button>' +
         '</div>' +
         '<p class="note" id="gfEngine"></p>' +
         '<p class="note">Space picks how the preview takes its weighted mean. ' +
@@ -213,7 +213,10 @@
       });
     var sel = field.querySelector('select');
     if (sel) {
-      sel.disabled = !paths.length;
+      explain(sel, !paths.length,
+              state.host ? 'There are no mask paths in this comp yet — draw one on any layer.'
+                         : 'Waiting for After Effects to answer.',
+              'Which mask path the gradient reads');
       sel.value = state.params.path || (curve.id || '');
     }
     return field;
@@ -682,45 +685,159 @@
     if (!global.CEP.isMock) probeTimer = setInterval(probeHost, 1500);
   }
 
+  /**
+   * A disabled control has to carry the reason it is disabled — in the tooltip
+   * always, and on the surface where there is room for it. A control that is
+   * off with no explanation reads as a bug.
+   */
+  function explain(node, blocked, reason, ready) {
+    if (!node) return;
+    node.disabled = blocked;
+    node.title = blocked ? reason : (ready || '');
+    node.setAttribute('aria-disabled', String(blocked));
+  }
+
   /** Create's enabled state and the line under it are one decision. */
   function syncCreate() {
     var g = activeSource().getGeometry();
     var blocked = !g.isValid;
 
-    el.create.disabled = blocked || state.busy;
-    el.create.title = blocked ? g.reason : 'Build this gradient in After Effects';
-    el.create.setAttribute('aria-disabled', String(blocked));
+    explain(el.create, blocked || state.busy,
+            state.busy ? 'Building…' : g.reason,
+            'Build this gradient in After Effects');
+    // busy is not the same as blocked: the reason still belongs to the source.
+    if (state.busy && g.isValid) el.create.setAttribute('aria-disabled', 'false');
 
     var line = blocked ? g.reason : (g.detail ? 'Builds from ' + g.detail : '');
     el.hint.textContent = line;
     el.hint.hidden = !line;
     el.hint.setAttribute('data-state', blocked ? 'blocked' : 'ready');
+
+    syncFreeze();
+  }
+
+  /** The same treatment for Export still frame, which needs a layer selected. */
+  function syncFreeze() {
+    if (!el.freeze) return;
+    var h = state.host;
+    var f = h && !h.offline ? h.freeze : null;
+    if (!h) {
+      explain(el.freeze, true, 'Looking for After Effects…');
+    } else if (h.offline) {
+      explain(el.freeze, true, 'No After Effects here — freezing happens in the comp.');
+    } else {
+      explain(el.freeze, !f || !f.valid, (f && f.reason) || 'Nothing to freeze.',
+              'Freeze the selected gradient layer at the playhead');
+    }
   }
 
   function freeze() {
+    if (el.freeze.disabled) return;
     setStatus('Freezing…', 'busy');
     global.CEP.call('freeze', {})
       .then(function (msg) { setStatus(msg || 'Frozen', 'ok'); })
-      .catch(function (err) { setStatus(err.message || 'Could not freeze the layer', 'err'); });
+      .catch(function (err) { setStatus(err.message || 'Could not freeze the layer', 'err'); })
+      .then(probeHost);
   }
 
-  /** Copy settings — the same numbers the host builds from. */
-  function copySettings() {
+  /**
+   * Copy settings — everything, and only what applies.
+   *
+   * It is built from the same two calls Create uses, so it cannot drift from
+   * what actually gets built: readSharedParams() for the palette and motion,
+   * and the active source's getGeometry() for the rest. A Mesh copy carries no
+   * Depth, a Curve copy carries the path it read, and a Letter copy carries the
+   * layer and the type it took from it.
+   */
+  function settingsSnapshot() {
     var p = state.params;
+    var shared = readSharedParams();
+    var geom = activeSource().getGeometry();
     var preset = p.preset ? G.presetById(p.preset) : null;
-    var text = JSON.stringify({
+
+    var out = {
+      plugin: 'GradientForge ' + G.version,
       generator: p.mode,
       preset: preset ? preset.name : null,
       colorSpace: p.colorSpace.toUpperCase(),
-      colors: p.colors,
+      linearBlending: p.linearBlending !== false,
+      colors: p.colors.slice(),
       motion: p.motion,
-      blend: p.blend,
       flow: p.flow,
       grain: p.grain,
-      separation: p.separation,
       loopSeconds: p.loop,
       seed: p.seed
-    }, null, 2);
+    };
+
+    if (p.mode === 'mesh') {
+      out.blend = p.blend;
+      out.separation = p.separation;
+      // The placement the seed resolves to, so a copied gradient can be
+      // checked against what was on screen rather than only re-derived.
+      out.points = shared.points.map(function (pt) {
+        return { home: pt.home.map(round4), radius: round4(pt.rad), harmonic: pt.harm };
+      });
+    }
+
+    if (p.mode === 'curve') {
+      out.path = pathRef();
+      out.closed = !!p.closed;
+      out.pointCount = (p.nodes || []).length;
+      out.spread = p.spread;
+      out.direction = p.direction;
+      out.offset = p.offset;
+    }
+
+    if (p.mode === 'letter') {
+      out.layer = layerRef();
+      out.spread = p.spread;
+      out.direction = p.direction;
+      out.depth = p.depth;
+      out.softness = p.softness;
+      out.style = p.style;
+    }
+
+    out.output = { precomp: !!state.output.precomp, name: (state.output.name || '').trim() };
+    // Anything the After Effects build does not honour yet is said here rather
+    // than left to look like it was applied.
+    if (p.mode !== 'mesh') out.previewOnly = ['direction'];
+    if (!geom.isValid) out.note = geom.reason;
+    return out;
+  }
+
+  function round4(v) { return Math.round(v * 10000) / 10000; }
+
+  /** Which mask the Curve tab read, by id and by the name a human recognises. */
+  function pathRef() {
+    var curve = (state.host && state.host.curve) || {};
+    var label = '';
+    (curve.paths || []).forEach(function (x) { if (x.id === state.params.path) label = x.label; });
+    if (!label) label = curve.detail || '';
+    var parts = label.split(' · ');
+    return {
+      id: state.params.path || null,
+      layer: parts[0] || null,
+      mask: parts.length > 1 ? parts.slice(1).join(' · ') : null
+    };
+  }
+
+  /** Which layer the Letter tab took, and the type it took from it. */
+  function layerRef() {
+    var l = (state.host && state.host.letter) || {};
+    var out = { name: l.detail || null, isText: !!l.isText };
+    if (l.isText || state.params.text) {
+      out.type = {
+        text: state.params.text,
+        font: state.params.font || 'system',
+        sizePercent: round4(state.params.textSize),
+        tracking: state.params.tracking
+      };
+    }
+    return out;
+  }
+
+  function copySettings() {
+    var text = JSON.stringify(settingsSnapshot(), null, 2);
 
     var done = function () {
       var label = el.copy.textContent;

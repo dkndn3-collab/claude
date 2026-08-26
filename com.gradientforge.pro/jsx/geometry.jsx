@@ -439,7 +439,8 @@ GF.Geom = (function () {
     want = want || {};
     var comp = null;
     try { comp = GF.U.activeComp(); } catch (e) {}
-    var out = ['{"comp":' + (comp ? U.quote(comp.name) : 'null')];
+    var out = ['{"comp":' + (comp ? U.quote(comp.name) : 'null') +
+              ',"freeze":' + freezeProbe(comp)];
     for (var id in SOURCES) {
       if (!SOURCES.hasOwnProperty(id)) continue;
       var r = comp ? SOURCES[id].probe(comp, want)
@@ -487,6 +488,34 @@ GF.Geom = (function () {
       out.push('"' + id + '":{' + body + '}');
     }
     return out.join(',') + '}';
+  }
+
+  /**
+   * Export still frame is not a geometry source, but it is a button that can be
+   * disabled, and the rule is the same: it has to say why. Time remapping is
+   * what freezing actually uses, so "can this be frozen" is asked of the
+   * layers, not guessed from the selection count.
+   */
+  function freezeProbe(comp) {
+    if (!comp) {
+      return '{"valid":false,"reason":' +
+             U.quote('Open a composition first, then try again.') + '}';
+    }
+    var sel = U.selectedLayers(comp);
+    if (!sel.length) {
+      return '{"valid":false,"reason":' +
+             U.quote('Select the gradient layer in the timeline to freeze it at the playhead.') + '}';
+    }
+    var n = 0;
+    for (var i = 0; i < sel.length; i++) {
+      try { if (sel[i].canSetTimeRemapEnabled) n++; } catch (e) {}
+    }
+    if (!n) {
+      return '{"valid":false,"reason":' +
+             U.quote('That layer cannot be frozen — freezing needs time remapping, ' +
+                     'so select the gradient precomp layer instead.') + '}';
+    }
+    return '{"valid":true,"reason":"","count":' + n + '}';
   }
 
   return {

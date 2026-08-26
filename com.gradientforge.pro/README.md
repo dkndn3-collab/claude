@@ -330,7 +330,15 @@ applyGradient(geometry, readSharedParams())
 ```
 
 Each source answers for itself — Mesh has no geometry and is valid whenever a
-comp is open; Curve wants a mask path in the timeline; Letter wants a layer. Validity is the *host's* call (`jsx/geometry.jsx` probes the real
+comp is open; Curve wants a mask path in the timeline; Letter wants a layer.
+
+**No control is ever disabled without saying why.** Create, Export still frame
+and Path ▾ each carry their reason in the tooltip, and Create also prints it on
+the surface under the button, because a greyed control with no explanation reads
+as a bug. Export still frame asks the host whether the selected layers can
+actually be time-remapped rather than guessing from the selection count, so its
+reason is the specific one — nothing selected, wrong kind of layer, or no comp
+at all — and pressing a disabled control never reaches the host. Validity is the *host's* call (`jsx/geometry.jsx` probes the real
 selection on a 1.5 s timer), so the disabled button and the refused build can
 never disagree: they quote the same sentence. A blocked **Create** prints its
 reason under the button rather than only in a tooltip, and pressing it never
@@ -347,6 +355,23 @@ outline into a ramp; Letter's stays crisp, because its volume lives inside the
 shape rather than on its silhouette.
 
 ---
+
+### Copy settings
+
+One block of JSON, built from the same two calls Create uses — `readSharedParams()`
+for the palette and motion, and the active source's `getGeometry()` for the rest
+— so it cannot drift from what actually gets built.
+
+It carries only what applies. A Mesh copy has Blend, Separation and the resolved
+colour-point placement, and no Depth. A Curve copy has the **path it read** —
+id, layer and mask name — plus closure, point count, Spread, Direction and
+Offset. A Letter copy has the **layer it took**, the type it took from it
+(string, family, size as a percentage of frame height, tracking), plus Depth,
+Softness and Style. Everything is stamped with the build version, so a bug
+report says what it ran on.
+
+Anything the After Effects build does not honour yet is named in a
+`previewOnly` list rather than left sitting there looking applied.
 
 ## Colour
 

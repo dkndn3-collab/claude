@@ -261,7 +261,7 @@
   /**
    * `modes` limits a parameter to the generators it means something for, which
    * is how the visible slider set changes per mode instead of growing. Mesh
-   * shows four; Shape shows five, the ceiling.
+   * shows four; Curve and Letter show five, the ceiling.
    */
   var PARAMS = [
     { key: 'motion', label: 'Motion', type: 'number', value: 34, min: 0, max: 100, step: 1, group: 'main',
@@ -520,6 +520,9 @@
   /* ====================================================================== */
 
   global.GRADIENTS = {
+    // Keep in step with CSXS/manifest.xml and jsx/host.jsx — it is stamped into
+    // every copied settings block, which is how a bug report says what it ran.
+    version: '0.8.0',
     TAU: TAU,
     maxColors: MAX_COLORS,
     modes: MODES,
