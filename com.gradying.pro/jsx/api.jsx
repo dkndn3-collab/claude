@@ -7,14 +7,14 @@
  * error text is written for the person reading it, not for a log.
  */
 
-$.global.GF = $.global.GF || {};
+$.global.GY = $.global.GY || {};
 
 (function () {
 
   function ping() {
     var version = String(app.version).split('x')[0];
     var comp = null;
-    try { comp = GF.U.activeComp(); } catch (e) {}
+    try { comp = GY.U.activeComp(); } catch (e) {}
     return comp
       ? 'Connected · AE ' + version + ' · ' + comp.name
       : 'Connected · AE ' + version + ' · open a comp to start';
@@ -22,13 +22,13 @@ $.global.GF = $.global.GF || {};
 
   function dispatch(action, p) {
     switch (action) {
-      case 'gradient': return GF.Gradient.create(p);
-      case 'freeze':   return GF.Gradient.freeze();
+      case 'gradient': return GY.Gradient.create(p);
+      case 'freeze':   return GY.Gradient.freeze();
       default: throw new Error('Unknown action: ' + action);
     }
   }
 
-  GF.api = function (action, paramsJson) {
+  GY.api = function (action, paramsJson) {
     try {
       if (action === 'ping') return 'OK|' + ping();
 
@@ -43,11 +43,11 @@ $.global.GF = $.global.GF || {};
 
       // Read-only, called on a timer: it must never open an undo group and
       // never throw, or a disabled button loses the reason it is disabled.
-      if (action === 'selection') return 'OK|' + GF.Geom.probeAll(params);
+      if (action === 'selection') return 'OK|' + GY.Geom.probeAll(params);
 
       var label = action === 'gradient'
-        ? 'GradientForge — ' + (params.label || 'gradient')
-        : 'GradientForge — ' + action;
+        ? 'Gradying — ' + (params.label || 'gradient')
+        : 'Gradying — ' + action;
 
       var result;
       app.beginUndoGroup(label);

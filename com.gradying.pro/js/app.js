@@ -25,7 +25,9 @@
     // What the host says is selected right now. Null until the first probe
     // answers — a button cannot claim a reason it has not been given.
     host: null,
-    busy: false
+    busy: false,
+    playing: false,
+    playhead: 0
   };
   var reduceMotion = false;
   try { reduceMotion = global.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -60,6 +62,7 @@
     view.innerHTML = '' +
       '<section class="stage">' +
         '<canvas class="canvas" id="gfHero"></canvas>' +
+        '<button class="play" id="gfPlay" hidden></button>' +
         '<div class="stage-ring" aria-hidden="true"></div>' +
         '<div class="stage-info">' +
           '<span class="stage-name" id="gfName"></span>' +
@@ -106,6 +109,7 @@
 
     el.view = view;
     el.hero = view.querySelector('#gfHero');
+    el.play = view.querySelector('#gfPlay');
     el.name = view.querySelector('#gfName');
     el.meta = view.querySelector('#gfMeta');
     el.modes = view.querySelector('#gfModes');
@@ -129,6 +133,7 @@
     el.shuffle = view.querySelector('#gfShuffle');
 
     el.shuffle.addEventListener('click', shuffle);
+    el.play.addEventListener('click', togglePlay);
     el.create.addEventListener('click', create);
     el.freeze.addEventListener('click', freeze);
     el.copy.addEventListener('click', copySettings);
@@ -163,6 +168,7 @@
       b.setAttribute('aria-selected', String(state.params.mode === m.id));
       b.addEventListener('click', function () {
         if (state.params.mode === m.id) return;
+        stopPlay();
         state.params.mode = m.id;
         // The visible slider set is what changes per mode — not its length.
         renderModes(); renderSliders(); renderGeometry(); renderAdvanced(); refresh();
@@ -463,18 +469,64 @@
 
     syncCreate();
 
-    PV.stop(el.hero);
-    if (p.motion > 0 && !reduceMotion) {
-      PV.animate(el.hero, function () { return state.params; }, 30);
-    } else {
-      PV.render(el.hero, p, 0);
-    }
+    // One frame. The preview used to run a requestAnimationFrame loop for as
+    // long as the panel was open, which is a GPU and a fan spinning for a
+    // picture nobody is looking at. Motion is now something you ask for.
+    if (!state.playing) PV.stop(el.hero);
+    PV.render(el.hero, p, state.playhead);
+    syncPlay();
 
     // Read after the first render — that is when the renderer knows whether it
     // got a GPU context.
     el.engine.textContent = 'Mesh · ' + p.colorSpace.toUpperCase() + ' · preview ' +
       (PV.accelerated ? 'on the GPU' : 'in software (no WebGL here)') +
       ' · the layer stack is solids, native effects and expressions — nothing is imported.';
+  }
+
+  /* ------------------------------------------------------------- playback */
+
+  /**
+   * Motion is previewed on request, not continuously.
+   *
+   * A loop that runs the whole time the panel is open costs a GPU frame every
+   * 33 ms forever — and the gradient IS a loop, so after one cycle it has
+   * nothing new to show. Play runs exactly one cycle and stops itself.
+   */
+  var playTimer = null;
+
+  function togglePlay() {
+    if (state.playing) stopPlay(); else startPlay();
+  }
+
+  function startPlay() {
+    if (reduceMotion || !state.params.motion) return;
+    state.playing = true;
+    PV.animate(el.hero, function () { return state.params; }, 30);
+    clearTimeout(playTimer);
+    playTimer = setTimeout(stopPlay, Math.max(2, state.params.loop) * 1000);
+    syncPlay();
+  }
+
+  function stopPlay() {
+    clearTimeout(playTimer);
+    if (!state.playing) { syncPlay(); return; }
+    state.playing = false;
+    PV.stop(el.hero);
+    // Land back on frame 0 — the frame a still export starts from.
+    state.playhead = 0;
+    PV.render(el.hero, state.params, 0);
+    syncPlay();
+  }
+
+  function syncPlay() {
+    if (!el.play) return;
+    var can = state.params.motion > 0 && !reduceMotion;
+    el.play.hidden = !can;
+    el.play.textContent = state.playing ? 'Stop' : 'Play';
+    el.play.title = state.playing
+      ? 'Stop the preview'
+      : 'Play one ' + state.params.loop + 's loop — the preview is a still otherwise';
+    el.play.setAttribute('data-on', String(!!state.playing));
   }
 
   /* ------------------------------------------------------- geometry sources */
@@ -678,11 +730,28 @@
     });
   }
 
+  /**
+   * The probe is an evalScript round trip, so its pace matters.
+   *
+   * It used to run every 1.5 s for as long as the panel was open, whether or
+   * not anyone was looking. Now the fast beat only runs while the panel has
+   * focus — which is when the selection can be changing under it — and drops
+   * to a slow one when it does not. Anything that could have changed the
+   * answer asks immediately, so it still feels live.
+   */
+  var FAST = 1500, SLOW = 8000;
+
   function watchHost(on) {
     clearInterval(probeTimer);
-    if (!on) return;
+    if (!on || global.CEP.isMock) { if (!on) return; probeHost(); return; }
     probeHost();
-    if (!global.CEP.isMock) probeTimer = setInterval(probeHost, 1500);
+    probeTimer = setInterval(probeHost, document.hasFocus() ? FAST : SLOW);
+  }
+
+  /** Re-pace without dropping a beat — called when focus comes and goes. */
+  function repace() {
+    if (document.hidden) return;
+    watchHost(true);
   }
 
   /**
@@ -756,7 +825,7 @@
     var preset = p.preset ? G.presetById(p.preset) : null;
 
     var out = {
-      plugin: 'GradientForge ' + G.version,
+      plugin: 'Gradying ' + G.version,
       generator: p.mode,
       preset: preset ? preset.name : null,
       colorSpace: p.colorSpace.toUpperCase(),
@@ -876,9 +945,15 @@
     // The preview is a live render and the probe is a live question; both stop
     // when the panel is not on screen.
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) { PV.stopAll(); watchHost(false); }
+      if (document.hidden) { stopPlay(); PV.stopAll(); watchHost(false); }
       else { refresh(); watchHost(true); }
     });
+    // Focus decides the beat, and leaving the panel also stops any playback:
+    // an animating preview behind another window is pure waste.
+    global.addEventListener('focus', repace);
+    global.addEventListener('blur', function () { stopPlay(); repace(); });
+    // Any interaction is a moment the answer may have changed.
+    document.addEventListener('pointerdown', function () { probeHost(); });
 
     watchHost(true);
 

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAME="com.gradientforge.panel"
+NAME="com.gradying.panel"
 
 case "$(uname -s)" in
   Darwin) DEST="$HOME/Library/Application Support/Adobe/CEP/extensions" ;;
@@ -39,4 +39,4 @@ else
   echo "On Windows, set PlayerDebugMode=1 (String) under HKCU/Software/Adobe/CSXS.9 through CSXS.12."
 fi
 
-echo "Restart After Effects, then open Window > Extensions > GradientForge."
+echo "Restart After Effects, then open Window > Extensions > Gradying."

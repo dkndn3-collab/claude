@@ -4,7 +4,7 @@
  * No footage, no imported file, no baked frame: solids, shape layers, stock
  * effects, and expressions that tie every parameter back to one controller.
  *
- *   GF CONTROLLER   Motion · Blend · Flow · Grain · Loop · Seed + the colours
+ *   GY CONTROLLER   Motion · Blend · Flow · Grain · Loop · Seed + the colours
  *   Grain           adjustment layer · Noise (never below one LSB of dither)
  *   Flow            adjustment layer · Turbulent Displace, low frequency
  *   Colour n…1      one soft colour point each: ellipse + Fast Box Blur,
@@ -31,10 +31,10 @@
  * guarded: a version that disagrees loses one parameter, not the whole build.
  */
 
-$.global.GF = $.global.GF || {};
+$.global.GY = $.global.GY || {};
 
-GF.Gradient = (function () {
-  var U = GF.U;
+GY.Gradient = (function () {
+  var U = GY.U;
 
   /* ====================================================================== */
   /* Defensive property access                                              */
@@ -123,7 +123,7 @@ GF.Gradient = (function () {
 
     /* ---- controller ---------------------------------------------------- */
 
-    var ctrlName = uniqueLayerName(comp, 'GF CONTROLLER');
+    var ctrlName = uniqueLayerName(comp, 'GY CONTROLLER');
     var ctrl = comp.layers.addNull();
     made.push(ctrl);
     ctrl.name = ctrlName;
@@ -281,7 +281,7 @@ GF.Gradient = (function () {
   function create(p) {
     var parent = U.activeComp();
     var mode = (p.geometry && p.geometry.mode) || p.mode || 'mesh';
-    var source = GF.Geom.sourceFor(mode);
+    var source = GY.Geom.sourceFor(mode);
     // The panel's geometry carries which path it picked, so the build and the
     // preview resolve to the same one even when the timeline selection moved.
     var geometry = source.read(parent, p.geometry || {});
@@ -357,7 +357,7 @@ GF.Gradient = (function () {
     placed.selected = true;
     // Name the source: the user picked it from a list, so the confirmation has
     // to say which one it actually built from.
-    return GF.Geom.sourceFor(mode).label + ' gradient added · ' +
+    return GY.Geom.sourceFor(mode).label + ' gradient added · ' +
            (geometry.label ? geometry.label + ' · ' : '') + count + extra + blending;
   }
 

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="9.0"
-                   ExtensionBundleId="com.gradientforge.panel"
+                   ExtensionBundleId="com.gradying.panel"
                    ExtensionBundleVersion="0.9.0"
-                   ExtensionBundleName="GradientForge"
+                   ExtensionBundleName="Gradying"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="com.gradientforge.panel.main" Version="0.9.0"/>
+    <Extension Id="com.gradying.panel.main" Version="0.9.0"/>
   </ExtensionList>
 
   <ExecutionEnvironment>
@@ -22,7 +22,7 @@
   </ExecutionEnvironment>
 
   <DispatchInfoList>
-    <Extension Id="com.gradientforge.panel.main">
+    <Extension Id="com.gradying.panel.main">
       <DispatchInfo>
         <Resources>
           <MainPath>./index.html</MainPath>
@@ -37,7 +37,7 @@
         </Lifecycle>
         <UI>
           <Type>Panel</Type>
-          <Menu>GradientForge</Menu>
+          <Menu>Gradying</Menu>
           <Geometry>
             <Size>
               <Height>720</Height>

@@ -7,9 +7,9 @@
  * localised installs of After Effects.
  */
 
-$.global.GF = $.global.GF || {};
+$.global.GY = $.global.GY || {};
 
-GF.U = (function () {
+GY.U = (function () {
   var U = {};
 
   /* ---------------------------------------------------------------- project */

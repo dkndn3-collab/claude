@@ -1,4 +1,4 @@
-# GradientForge — v0.4.0
+# Gradying — v0.4.0
 
 A dockable After Effects panel that generates gradient backgrounds — animated or
 still — with one hard rule: **no gradient is ever an asset**.
@@ -214,6 +214,26 @@ One slider covers the whole useful range, which is why it is not two checkboxes.
 - The colour pipeline is untouched: same warp, same closed-circle loop, same
   dither, palette walked in OKLab in linear light.
 
+### The preview is a still
+
+The hero used to run a `requestAnimationFrame` loop for as long as the panel
+was open: a GPU frame every 33 ms, forever, for a picture nobody was
+necessarily looking at. The gradient *is* a loop, so after one cycle it has
+nothing new to show anyway.
+
+It now renders **one frame** — on load, and whenever a parameter changes. A
+**Play** control appears on the canvas when the preset has Motion, runs exactly
+one loop, and stops itself. Leaving the panel, or hiding it, stops playback too.
+
+The host probe was the other idle cost: an `evalScript` round trip every 1.5 s
+regardless. It now beats fast only while the panel has focus, drops to 8 s when
+it does not, and stops entirely when the panel is hidden — while anything that
+could have changed the answer (a mode switch, a click anywhere in the panel, a
+build, regaining focus) asks immediately, so it still feels live.
+
+Measured in a real browser: **2 animation frames in 4 idle seconds**, against
+roughly 120 before, and zero of either while hidden.
+
 ### The build is not the preview, and that was the bug
 
 The panel takes a **normalised** weighted mean with an infinite tail: every
@@ -314,9 +334,9 @@ is really in the comp instead of a placeholder the user had to type twice.
 Volume comes out of two stock effects and nothing else:
 
 ```
-GF MATTE — Letter    the alpha, filled white, CRISP — an alpha matte
+GY MATTE — Letter    the alpha, filled white, CRISP — an alpha matte
 GRADIENT — …         the colour field · CC Glass  (+ Displacement Map in Refract)
-GF HEIGHT — Letter   the alpha, filled white, blurred by Softness · switched off
+GY HEIGHT — Letter   the alpha, filled white, blurred by Softness · switched off
 ```
 
 The height field is the layer's own alpha blurred by **Softness** — flat in the
@@ -449,7 +469,7 @@ turned it on.
 ## What actually gets built
 
 ```
-GF CONTROLLER   Motion · Blend · Flow · Grain · Separation · Loop · Seed
+GY CONTROLLER   Motion · Blend · Flow · Grain · Separation · Loop · Seed
                 + every colour
 Grain           adjustment layer · Noise, never below one LSB of dither
 Flow            adjustment layer · Turbulent Displace, low frequency
@@ -507,7 +527,7 @@ Windows  %APPDATA%\Adobe\CEP\extensions\
 ./install.sh --link   # symlinks, so edits are live
 ```
 
-**3. Restart After Effects** → `Window ▸ Extensions ▸ GradientForge`.
+**3. Restart After Effects** → `Window ▸ Extensions ▸ Gradying`.
 
 ### Developing without AE
 

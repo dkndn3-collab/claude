@@ -27,10 +27,10 @@
     });
   }
 
-  /** Calls GF.api(action, paramsJson) inside ExtendScript. */
+  /** Calls GY.api(action, paramsJson) inside ExtendScript. */
   function call(action, params) {
     var payload = JSON.stringify(JSON.stringify(params || {}));
-    return evalScript('GF.api("' + action + '", ' + payload + ')').then(parseResult);
+    return evalScript('GY.api("' + action + '", ' + payload + ')').then(parseResult);
   }
 
   /** Host replies are "OK|payload" or "ERR|message" — keeps parsing trivial. */

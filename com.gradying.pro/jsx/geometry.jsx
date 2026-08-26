@@ -22,10 +22,10 @@
  * own layer with native effects on it.
  */
 
-$.global.GF = $.global.GF || {};
+$.global.GY = $.global.GY || {};
 
-GF.Geom = (function () {
-  var U = GF.U;
+GY.Geom = (function () {
+  var U = GY.U;
 
   /* ---------------------------------------------------------------- parts */
 
@@ -239,7 +239,7 @@ GF.Geom = (function () {
      * an open path. Which it is comes from the path, never from a toggle.
      */
     matte: function (comp, source, p) {
-      var name = uniqueName(comp, 'GF MATTE — Curve');
+      var name = uniqueName(comp, 'GY MATTE — Curve');
       var layer = comp.layers.addSolid([0, 0, 0], name, comp.width, comp.height, 1);
       layer.name = name;
       try { layer.motionBlur = false; } catch (e) {}
@@ -349,7 +349,7 @@ GF.Geom = (function () {
      * volume this mode is for lives *inside* the shape, not on its silhouette.
      */
     matte: function (comp, source) {
-      var layer = copyOf(source.layer, uniqueName(comp, 'GF MATTE — Letter'));
+      var layer = copyOf(source.layer, uniqueName(comp, 'GY MATTE — Letter'));
       // Fill only guarantees the alpha is opaque white, so a coloured or
       // semi-transparent original still mattes cleanly.
       set(colorOf(fx(layer, 'ADBE Fill', 'Matte')), WHITE);
@@ -380,7 +380,7 @@ GF.Geom = (function () {
       var depth = geom.depth == null ? 55 : geom.depth;
       var refract = geom.style === 'refract';
 
-      var name = uniqueName(comp, 'GF HEIGHT — Letter');
+      var name = uniqueName(comp, 'GY HEIGHT — Letter');
       var height = copyOf(source.layer, name);
       set(colorOf(fx(height, 'ADBE Fill', 'Height')), WHITE);
 
@@ -472,7 +472,7 @@ GF.Geom = (function () {
   function probeAll(want) {
     want = want || {};
     var comp = null;
-    try { comp = GF.U.activeComp(); } catch (e) {}
+    try { comp = GY.U.activeComp(); } catch (e) {}
     var out = ['{"comp":' + (comp ? U.quote(comp.name) : 'null') +
               ',"freeze":' + freezeProbe(comp)];
     for (var id in SOURCES) {

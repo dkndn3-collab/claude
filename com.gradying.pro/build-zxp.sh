@@ -15,8 +15,8 @@ set -euo pipefail
 CERT="${1:-}"
 PASS="${2:-}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="$SRC/dist/GradientForge.zxp"
-STAGE="$(mktemp -d)/GradientForge"
+OUT="$SRC/dist/Gradying.zxp"
+STAGE="$(mktemp -d)/Gradying"
 
 if [ -z "$CERT" ] || [ -z "$PASS" ]; then
   echo "Usage: ./build-zxp.sh <cert.p12> <password>"; exit 1

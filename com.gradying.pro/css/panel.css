@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GradientForge — panel styles
+   Gradying — panel styles
 
    Very dark charcoal, then a few translucent sheets above it. Depth comes from
    hairlines, restrained blur and a little ambient light rather than shadow, so
@@ -642,6 +642,33 @@ select {
 }
 
 .dock-row { display: flex; gap: 8px; }
+
+/* Motion is previewed on request. The control only appears when there is
+   motion to show, and it sits on the canvas rather than taking a row. */
+.play {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  height: 24px;
+  padding: 0 11px;
+  border: 1px solid var(--hair-soft);
+  border-radius: 7px;
+  background: rgba(20, 20, 22, 0.62);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--ink-2);
+  font-family: var(--font);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .16s ease, color .16s ease, border-color .16s ease;
+}
+.stage:hover .play,
+.play:focus-visible,
+.play[data-on="true"] { opacity: 1; }
+.play:hover { color: var(--ink); border-color: var(--hair); }
+.play[hidden] { display: none; }
 
 /* A disabled Create has to say why on the surface, not only on hover. */
 .dock-hint {
