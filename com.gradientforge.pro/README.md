@@ -174,7 +174,7 @@ geometry source  →  raster  →  seed  →  jump flood  →  SDF  →  coordin
 
 | Mode | Geometry | Controls |
 |---|---|---|
-| **Curve** | An open or closed bezier path | **Spread** sets the falloff distance, not a rendered stroke; **Fill** confines the ramp inside a closed path |
+| **Curve** | A **mask path from the timeline**, picked in Path ▾ | **Spread** sets the falloff distance, not a rendered stroke; **Offset** moves the edge it is measured from |
 | **Letter** | Text, any system font, multi-line | **Per letter** — 0 runs one ramp across the whole word, 100 gives every glyph its own |
 
 **Shape was removed in v0.4.** It generated its own rectangles and ellipses
@@ -214,18 +214,41 @@ One slider covers the whole useful range, which is why it is not two checkboxes.
 - The colour pipeline is untouched: same warp, same closed-circle loop, same
   dither, palette walked in OKLab in linear light.
 
-### The pen
+### Curve reads the timeline
 
-Click to place a point, drag while placing to pull its handles, drag a point to
-move it, click the first point to close the path. The selected point can be
-switched between smooth and corner or deleted, from the tool row or with
-Backspace; Enter closes and opens; Escape deselects. The points are parameters
-like any other — they travel with **Copy settings**.
+**The pen tool was removed in v0.6.** After Effects already has a mask tool,
+with snapping, keyframes and every editing habit the user already has; a second
+one inside the panel asked them to draw in the wrong place and then produced a
+path nothing else in the project could see.
 
-A closed path makes `t` cyclic, so by default it is **mirrored**: `t` and `1-t`
-give the same colour and the seam disappears. Wrapping instead needs the first
-and last colour to match, which they rarely do, so it is the opt-in under
-Advanced.
+Instead, **Path ▾** lists every mask path in the comp, by layer and mask name.
+Whatever is selected in the timeline is the default; picking another needs no
+selection at all. Both halves resolve the choice the same way — the panel sends
+the id it drew, so the build can never land on a different curve than the one on
+screen, even if the selection moved in between.
+
+The path comes back in comp space over frame height, with After Effects' own
+**in and out tangents kept separate**. A mask point with a corner on one side
+and a curve on the other is ordinary, and the pen's one-symmetric-handle model
+would have quietly redrawn it. The points are re-read on every tick while the
+Curve tab is open, so editing the mask in After Effects repaints the preview
+with no click in the panel.
+
+**Closure is read, never asked.** A closed path has an interior, so it mattes as
+a filled region and its cyclic `t` is **mirrored** — `t` and `1-t` give the same
+colour, and the seam disappears without needing the first and last colour to
+match. An open path has no interior, so it is stroked and `t` runs end to end.
+There is no Fill toggle and no Seam menu any more: both were the user restating
+something the path already knew, and getting it wrong was silent.
+
+**Offset** slides the boundary the ramp is measured from — in for positive, out
+for negative. Natively that is a Simple Choker on the matte; in the preview it
+is a constant added to the signed distance. Same control, same units.
+
+One gap, stated plainly: **Direction is preview-only in the native build.** The
+matte gives the shape and the mesh gives the colour, and getting a true `d`/`t`
+ramp into After Effects needs a scriptable multi-stop gradient, which — see
+*Limits* — it does not have. Spread, Offset and closure all reach the build.
 
 ### Verified
 
@@ -266,9 +289,9 @@ silently builds something else.
 The colour field is identical in all three: same points, same orbits, same
 loop. What Curve and Letter add is a **track matte** built from the user's own
 layer — a duplicate with native effects on it, never a rasterised copy. Curve
-strokes the mask (the one native way to get pixels out of an *open* path) or
-fills it when **Fill** is on; Letter uses the glyph alpha. Either way a blurred
-edge, driven by a live **Spread** slider on the matte, is what turns the
+fills a closed mask or strokes an open one (the one native way to get pixels out
+of an open path); Letter uses the glyph alpha. Either way a blurred edge, driven
+by live **Spread** and **Offset** sliders on the matte, is what turns the
 outline into a ramp. The user's own layer is never modified.
 
 ---

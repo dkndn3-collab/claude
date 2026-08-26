@@ -31,9 +31,6 @@ $.global.GF = $.global.GF || {};
   GF.api = function (action, paramsJson) {
     try {
       if (action === 'ping') return 'OK|' + ping();
-      // Read-only, called on a timer: it must never open an undo group and
-      // never throw, or a disabled button loses the reason it is disabled.
-      if (action === 'selection') return 'OK|' + GF.Geom.probeAll();
 
       var params = {};
       if (paramsJson) {
@@ -43,6 +40,10 @@ $.global.GF = $.global.GF || {};
           throw new Error('Those settings could not be read. Reopen the panel and try again.');
         }
       }
+
+      // Read-only, called on a timer: it must never open an undo group and
+      // never throw, or a disabled button loses the reason it is disabled.
+      if (action === 'selection') return 'OK|' + GF.Geom.probeAll(params);
 
       var label = action === 'gradient'
         ? 'GradientForge — ' + (params.label || 'gradient')

@@ -48,7 +48,7 @@
     'uniform float uMode;       // 0 = mesh · 1 = geometry (SDF)',
     'uniform sampler2D uSDF;    // R,G signed distance · B along · A glyph id',
     'uniform float uSpread;     // ramp width across the boundary, frame heights',
-    'uniform float uFill;       // 1 = confined inside · 0 = bleeding both ways',
+    'uniform float uOffset;    // moves the edge the ramp is measured from',
     'uniform float uOpen;       // 1 = the geometry has no interior',
     'uniform float uDir;        // 0 = across the boundary · 1 = along it',
     'uniform float uPerLetter;  // 0 = one ramp across the word · 1 = per glyph',
@@ -251,8 +251,10 @@
     '    /* Two axes from one field: across the boundary, and along it. The',
     '       Direction slider is a straight blend between them — one control',
     '       instead of a mode switch, and every value in between is useful. */',
+    '    /* Offset slides the boundary the ramp is measured from, in the same',
+    '       units as the distance itself — in for positive, out for negative. */',
+    '    sd = sd + uOffset;',
     '    float across = uOpen > 0.5 ? clamp(sd / w, 0.0, 1.0)',
-    '                 : uFill > 0.5 ? clamp(-sd / w, 0.0, 1.0)',
     '                               : clamp(0.5 + sd / (2.0 * w), 0.0, 1.0);',
     '    float g = mix(across, alongAt(sp), uDir);',
     '    gl_FragColor = vec4(dither(toSRGB(rampLin(g))), 1.0);',
@@ -329,7 +331,7 @@
 
     U = {};
     ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uReach', 'uSeed',
-     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uFill', 'uOpen', 'uDir', 'uPerLetter',
+     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uOffset', 'uOpen', 'uDir', 'uPerLetter',
      'uSeam', 'uGlyphs']
       .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
     U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
@@ -416,12 +418,14 @@
     var gm = r.geometry;
     gl.uniform1f(U.uMode, geometry ? 1 : 0);
     gl.uniform1f(U.uSpread, (gm.spread || 40) / 100);
-    gl.uniform1f(U.uFill, gm.fill ? 1 : 0);
+    gl.uniform1f(U.uOffset, (gm.offset || 0) / 100 * 0.12);
     gl.uniform1f(U.uOpen, geometry && sdf && sdf.open ? 1 : 0);
     gl.uniform1f(U.uDir, (gm.direction || 0) / 100);
     gl.uniform1f(U.uPerLetter, (gm.perLetter || 0) / 100);
     // Only a closed run of t needs the seam treatment.
-    gl.uniform1f(U.uSeam, (r.mode !== 'letter' && !(sdf && sdf.open) && gm.seam !== 'wrap') ? 1 : 0);
+    // A closed path's t is cyclic, so it is mirrored — always, and without
+    // asking: the seam is a property of the path, not a preference.
+    gl.uniform1f(U.uSeam, (r.mode !== 'letter' && !(sdf && sdf.open)) ? 1 : 0);
     gl.uniform1f(U.uGlyphs, r.mode === 'letter' ? Math.max(1, gm.glyphCount || 1) : 0);
     if (geometry) {
       gl.activeTexture(gl.TEXTURE0);

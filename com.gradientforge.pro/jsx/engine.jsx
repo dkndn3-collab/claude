@@ -266,7 +266,9 @@ GF.Gradient = (function () {
     var parent = U.activeComp();
     var mode = (p.geometry && p.geometry.mode) || p.mode || 'mesh';
     var source = GF.Geom.sourceFor(mode);
-    var geometry = source.read(parent);
+    // The panel's geometry carries which path it picked, so the build and the
+    // preview resolve to the same one even when the timeline selection moved.
+    var geometry = source.read(parent, p.geometry || {});
 
     var colors = p.colors || [];
     if (colors.length < 2) throw new Error('A gradient needs at least two colours.');
@@ -328,8 +330,10 @@ GF.Gradient = (function () {
     }
 
     placed.selected = true;
-    return GF.Geom.sourceFor(mode).label + ' gradient added · ' + count +
-           ' · matted by ' + matte.name + blending;
+    // Name the source: the user picked it from a list, so the confirmation has
+    // to say which one it actually built from.
+    return GF.Geom.sourceFor(mode).label + ' gradient added · ' +
+           (geometry.label ? geometry.label + ' · ' : '') + count + blending;
   }
 
   /** AE 23 replaced the track-matte property with a method; support both. */

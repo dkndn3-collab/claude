@@ -148,6 +148,90 @@ GF.U = (function () {
     return null;
   };
 
+  /* ------------------------------------------------------------ mask paths */
+
+  /**
+   * A point in the layer's own space, in comp pixels.
+   *
+   * Newer After Effects does this for us. Older ones do not, so the fallback is
+   * the transform written out by hand — anchor, scale, rotation, position, in
+   * that order, which is the order AE applies them.
+   */
+  U.layerToComp = function (layer, pt) {
+    try {
+      if (typeof layer.sourcePointToComp === 'function') {
+        var v = layer.sourcePointToComp(pt);
+        if (v && v.length >= 2 && !isNaN(v[0])) return [v[0], v[1]];
+      }
+    } catch (e) {}
+
+    var t = layer.property('ADBE Transform Group');
+    function val(name, fallback) {
+      try {
+        var q = t.property(name);
+        return q ? q.value : fallback;
+      } catch (e2) { return fallback; }
+    }
+    var anchor = val('ADBE Anchor Point', [0, 0]);
+    var pos    = val('ADBE Position', [0, 0]);
+    var scale  = val('ADBE Scale', [100, 100]);
+    var rot    = val('ADBE Rotate Z', 0);
+
+    var x = (pt[0] - anchor[0]) * (scale[0] / 100);
+    var y = (pt[1] - anchor[1]) * (scale[1] / 100);
+    var a = (rot || 0) * Math.PI / 180;
+    var ca = Math.cos(a), sa = Math.sin(a);
+    return [pos[0] + x * ca - y * sa, pos[1] + x * sa + y * ca];
+  };
+
+  /**
+   * A mask path as the panel's renderer wants it: comp space over frame
+   * height, with After Effects' own in and out tangents kept separate. The
+   * panel had a pen tool with one symmetric handle per point; a real mask does
+   * not work that way, and forcing it to would redraw the user's curve wrongly.
+   *
+   * `closed` is read from the path, never asked of the user.
+   */
+  U.maskNodes = function (comp, layer, mask) {
+    var shape;
+    try { shape = mask.property('ADBE Mask Shape').value; } catch (e) { return null; }
+    if (!shape || !shape.vertices || !shape.vertices.length) return null;
+
+    var v = shape.vertices, inT = shape.inTangents || [], outT = shape.outTangents || [];
+    var s = comp.height || 1;
+    var nodes = [];
+    for (var i = 0; i < v.length; i++) {
+      var c = U.layerToComp(layer, v[i]);
+      // Tangents are offsets, so they take the transform without the origin.
+      var o = U.layerToComp(layer, [v[i][0] + (outT[i] ? outT[i][0] : 0),
+                                    v[i][1] + (outT[i] ? outT[i][1] : 0)]);
+      var n = U.layerToComp(layer, [v[i][0] + (inT[i] ? inT[i][0] : 0),
+                                    v[i][1] + (inT[i] ? inT[i][1] : 0)]);
+      nodes.push({
+        x: c[0] / s, y: c[1] / s,
+        ox: (o[0] - c[0]) / s, oy: (o[1] - c[1]) / s,
+        ix: (n[0] - c[0]) / s, iy: (n[1] - c[1]) / s
+      });
+    }
+    return { closed: !!shape.closed, nodes: nodes };
+  };
+
+  /** Six numbers per point, at raster precision — the panel never sees more. */
+  function r5(v) {
+    v = Math.round((v || 0) * 100000) / 100000;
+    return isNaN(v) ? 0 : v;
+  }
+
+  U.nodesJSON = function (nodes) {
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      out.push('[' + r5(n.x) + ',' + r5(n.y) + ',' + r5(n.ox) + ',' + r5(n.oy) +
+               ',' + r5(n.ix) + ',' + r5(n.iy) + ']');
+    }
+    return '[' + out.join(',') + ']';
+  };
+
   /** ExtendScript has no JSON — this is the only escaping the replies need. */
   U.quote = function (s) {
     s = String(s == null ? '' : s);

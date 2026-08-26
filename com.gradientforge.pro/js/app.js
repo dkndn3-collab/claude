@@ -20,7 +20,6 @@
     harmony: 'analogous',
     filter: 'all',
     allFilters: false,
-    selected: -1,
     query: '',
     output: { precomp: true, name: '' },
     // What the host says is selected right now. Null until the first probe
@@ -61,8 +60,6 @@
     view.innerHTML = '' +
       '<section class="stage">' +
         '<canvas class="canvas" id="gfHero"></canvas>' +
-        '<canvas class="pen" id="gfPen" hidden tabindex="0" ' +
-                'aria-label="Curve editor: click to add a point, drag to bend it"></canvas>' +
         '<div class="stage-ring" aria-hidden="true"></div>' +
         '<div class="stage-info">' +
           '<span class="stage-name" id="gfName"></span>' +
@@ -109,7 +106,6 @@
 
     el.view = view;
     el.hero = view.querySelector('#gfHero');
-    el.pen = view.querySelector('#gfPen');
     el.name = view.querySelector('#gfName');
     el.meta = view.querySelector('#gfMeta');
     el.modes = view.querySelector('#gfModes');
@@ -140,11 +136,6 @@
       state.allFilters = !state.allFilters;
       renderFilters();
     });
-    el.pen.addEventListener('pointerdown', penDown);
-    el.pen.addEventListener('pointermove', penMove);
-    el.pen.addEventListener('pointerup', penUp);
-    el.pen.addEventListener('pointercancel', penUp);
-    el.pen.addEventListener('keydown', penKey);
     el.search.addEventListener('input', function () {
       state.query = el.search.value;
       renderCards();
@@ -187,207 +178,45 @@
   function renderGeometry() {
     var mode = state.params.mode;
     var fields = G.paramsOf('geometry', mode);
-    var pen = mode === 'curve';
-    el.geometry.hidden = !fields.length && !pen;
+    var curve = mode === 'curve';
+    el.geometry.hidden = !fields.length && !curve;
     el.geometry.innerHTML = '';
+    if (curve) el.geometry.appendChild(pathPicker());
     fields.forEach(function (p) {
       el.geometry.appendChild(C.field(p, state.params, onChange));
     });
-    if (pen) el.geometry.appendChild(penTools());
-    el.pen.hidden = !pen;
-    if (pen) drawPen();
   }
-
-  function penTools() {
-    var row = document.createElement('div');
-    row.className = 'tools';
-
-    var hint = document.createElement('span');
-    hint.className = 'tool-hint';
-    hint.textContent = state.params.nodes.length
-      ? state.params.nodes.length + (state.params.closed ? ' points · closed' : ' points')
-      : 'Click the canvas to draw';
-    row.appendChild(hint);
-
-    function tool(label, title, fn, on) {
-      var b = document.createElement('button');
-      b.className = 'tool' + (on ? ' on' : '');
-      b.textContent = label;
-      b.title = title;
-      b.addEventListener('click', fn);
-      row.appendChild(b);
-      return b;
-    }
-
-    var sel = state.selected;
-    var node = sel >= 0 ? state.params.nodes[sel] : null;
-    if (node) {
-      tool(node.corner ? 'Corner' : 'Smooth',
-           'Toggle the selected point between smooth and corner',
-           function () { node.corner = !node.corner; onGeometry(); }, true);
-      tool('Delete', 'Remove the selected point', function () {
-        state.params.nodes.splice(sel, 1);
-        state.selected = -1;
-        onGeometry();
-      });
-    }
-    tool(state.params.closed ? 'Open' : 'Close', 'Close or open the path', function () {
-      if (state.params.nodes.length > 2) { state.params.closed = !state.params.closed; onGeometry(); }
-    }, state.params.closed);
-    tool('Clear', 'Start again', function () {
-      state.params.nodes = []; state.params.closed = false; state.selected = -1; onGeometry();
-    });
-    return row;
-  }
-
-  /* ------------------------------------------------------------- pen tool */
 
   /**
-   * A minimal pen: click to place a point, drag while placing to pull its
-   * handles, drag a point to move it, drag a handle to reshape, click the first
-   * point to close. Everything lands in `params.nodes`, in 0–1 of the frame
-   * height, which is the same space the rasteriser reads.
+   * Path ▾ — every mask path in the comp, listed by layer and mask name.
+   *
+   * The options are whatever the host reported on the last tick, so this is
+   * built here rather than declared in the parameter schema. Picking one is the
+   * only geometry decision the Curve tab has: the points, and whether the path
+   * is closed, belong to the mask itself.
    */
-  var drag = null;
+  function pathPicker() {
+    var curve = (state.host && state.host.curve) || {};
+    var paths = curve.paths || [];
+    var opts = paths.length
+      ? paths.map(function (x) { return { value: x.id, label: x.label }; })
+      : [{ value: '', label: state.host ? 'No mask paths in this comp' : 'Looking…' }];
 
-  function penSpace(ev) {
-    var r = el.pen.getBoundingClientRect();
-    return { x: (ev.clientX - r.left) / r.height, y: (ev.clientY - r.top) / r.height, h: r.height };
-  }
-
-  function hitTest(pt) {
-    var nodes = state.params.nodes, tol = 14 / (el.pen.getBoundingClientRect().height || 1);
-    for (var i = nodes.length - 1; i >= 0; i--) {
-      var n = nodes[i];
-      if (Math.hypot(n.x - pt.x, n.y - pt.y) < tol) return { node: i, handle: false };
-      if (!n.corner && i === state.selected &&
-          Math.hypot(n.x + (n.hx || 0) - pt.x, n.y + (n.hy || 0) - pt.y) < tol) {
-        return { node: i, handle: true };
-      }
+    var field = C.field(
+      { key: 'path', label: 'Path', type: 'select', options: opts },
+      state.params,
+      function () {
+        // A different path is a different geometry — ask for its points now.
+        state.params.nodes = [];
+        clearPreset();
+        probeHost();
+      });
+    var sel = field.querySelector('select');
+    if (sel) {
+      sel.disabled = !paths.length;
+      sel.value = state.params.path || (curve.id || '');
     }
-    return null;
-  }
-
-  function penDown(ev) {
-    if (state.params.mode !== 'curve') return;
-    ev.preventDefault();
-    el.pen.focus();
-    var pt = penSpace(ev);
-    var hit = hitTest(pt);
-
-    if (hit) {
-      // Clicking the first point closes the path.
-      if (!hit.handle && hit.node === 0 && state.params.nodes.length > 2 && !state.params.closed) {
-        state.params.closed = true;
-        state.selected = 0;
-        onGeometry();
-        return;
-      }
-      state.selected = hit.node;
-      drag = { index: hit.node, handle: hit.handle, moved: false };
-    } else {
-      state.params.nodes.push({ x: pt.x, y: pt.y, hx: 0, hy: 0, corner: false });
-      state.selected = state.params.nodes.length - 1;
-      drag = { index: state.selected, handle: true, fresh: true, moved: false };
-    }
-    el.pen.setPointerCapture(ev.pointerId);
-    onGeometry();
-  }
-
-  function penMove(ev) {
-    if (!drag) return;
-    var pt = penSpace(ev);
-    var n = state.params.nodes[drag.index];
-    if (!n) return;
-    if (drag.handle) {
-      n.hx = pt.x - n.x; n.hy = pt.y - n.y;
-      n.corner = false;
-    } else {
-      n.x = pt.x; n.y = pt.y;
-    }
-    drag.moved = true;
-    onGeometry();
-  }
-
-  function penUp(ev) {
-    if (!drag) return;
-    // A click with no drag is a corner point, not a smooth one with zero pull.
-    var n = state.params.nodes[drag.index];
-    if (n && drag.fresh && !drag.moved) n.corner = true;
-    try { el.pen.releasePointerCapture(ev.pointerId); } catch (e) {}
-    drag = null;
-    onGeometry();
-  }
-
-  function penKey(ev) {
-    if (state.params.mode !== 'curve') return;
-    var nodes = state.params.nodes;
-    if ((ev.key === 'Backspace' || ev.key === 'Delete') && state.selected >= 0) {
-      nodes.splice(state.selected, 1);
-      state.selected = -1;
-      ev.preventDefault();
-      onGeometry();
-    } else if (ev.key === 'Escape') {
-      state.selected = -1;
-      onGeometry();
-    } else if (ev.key === 'Enter' && nodes.length > 2) {
-      state.params.closed = !state.params.closed;
-      onGeometry();
-    }
-  }
-
-  function onGeometry() {
-    clearPreset();
-    renderGeometry();
-    refresh();
-  }
-
-  /** The editor's own overlay: points, handles and the path between them. */
-  function drawPen() {
-    var rect = el.pen.getBoundingClientRect();
-    var dpr = Math.min(global.devicePixelRatio || 1, 2);
-    var w = Math.max(2, Math.round(rect.width * dpr)), h = Math.max(2, Math.round(rect.height * dpr));
-    if (el.pen.width !== w || el.pen.height !== h) { el.pen.width = w; el.pen.height = h; }
-    var ctx = el.pen.getContext('2d');
-    ctx.clearRect(0, 0, w, h);
-
-    var nodes = state.params.nodes, s = rect.height * dpr;
-    if (!nodes.length) return;
-
-    ctx.lineWidth = 1 * dpr;
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.beginPath();
-    ctx.moveTo(nodes[0].x * s, nodes[0].y * s);
-    var last = nodes.length - (state.params.closed ? 0 : 1);
-    for (var i = 0; i < last; i++) {
-      var a = nodes[i], b = nodes[(i + 1) % nodes.length];
-      ctx.bezierCurveTo((a.x + (a.hx || 0)) * s, (a.y + (a.hy || 0)) * s,
-                        (b.x - (b.hx || 0)) * s, (b.y - (b.hy || 0)) * s, b.x * s, b.y * s);
-    }
-    ctx.stroke();
-
-    nodes.forEach(function (n, i) {
-      var on = i === state.selected;
-      if (on && !n.corner) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.beginPath();
-        ctx.moveTo(n.x * s, n.y * s);
-        ctx.lineTo((n.x + (n.hx || 0)) * s, (n.y + (n.hy || 0)) * s);
-        ctx.stroke();
-        dot((n.x + (n.hx || 0)) * s, (n.y + (n.hy || 0)) * s, 3.5 * dpr, 'rgba(255,255,255,0.75)');
-      }
-      dot(n.x * s, n.y * s, (on ? 5 : 4) * dpr, on ? '#fff' : 'rgba(255,255,255,0.8)');
-    });
-
-    function dot(x, y, r, fill) {
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = fill;
-      ctx.fill();
-      ctx.lineWidth = 1 * dpr;
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.stroke();
-    }
+    return field;
   }
 
   /* --------------------------------------------------------------- library */
@@ -501,8 +330,8 @@
     });
   }
 
-  var GEOM_KEYS = ['spread', 'direction', 'fill', 'nodes', 'closed', 'text', 'font',
-                   'textSize', 'tracking', 'perLetter', 'seam'];
+  var GEOM_KEYS = ['spread', 'direction', 'offset', 'path', 'nodes', 'closed',
+                   'text', 'font', 'textSize', 'tracking', 'perLetter'];
   function geometryOf(p) {
     var out = {};
     GEOM_KEYS.forEach(function (k) { out[k] = p[k]; });
@@ -631,8 +460,6 @@
 
     syncCreate();
 
-    if (!el.pen.hidden) drawPen();
-
     PV.stop(el.hero);
     if (p.motion > 0 && !reduceMotion) {
       PV.animate(el.hero, function () { return state.params; }, 30);
@@ -694,16 +521,24 @@
       getGeometry: function () { return answer('mesh', {}); }
     },
 
-    /** A mask path the user already drew, read from the timeline. */
+    /**
+     * A mask path the user already drew. The panel authors none of it: `path`
+     * says which mask, and the points and the closed flag are the mask's own,
+     * read back from the host. Sending the id along means the build resolves to
+     * the very path the preview drew, even if the timeline selection has since
+     * moved.
+     */
     curve: {
       id: 'curve',
       getGeometry: function () {
         var p = state.params;
         return answer('curve', {
+          path: p.path,
+          nodes: p.nodes,
+          closed: !!p.closed,
           spread: p.spread,
           direction: p.direction,
-          fill: !!p.fill,
-          seam: p.seam
+          offset: p.offset
         });
       }
     },
@@ -770,11 +605,45 @@
       syncCreate();
       return Promise.resolve();
     }
-    return global.CEP.call('selection', {}).then(function (json) {
+    // Which tab is open decides how much comes back: the points of a mask path
+    // are only worth sending while something is drawing them.
+    var want = { mode: state.params.mode, path: state.params.path || '' };
+    return global.CEP.call('selection', want).then(function (json) {
       try { state.host = JSON.parse(json); } catch (e) { state.host = { comp: null }; }
     }, function () {
       state.host = { comp: null };
-    }).then(syncCreate);
+    }).then(adoptPath).then(syncCreate);
+  }
+
+  /**
+   * Copy the host's path into the parameters the renderer reads.
+   *
+   * This is the join the Curve tab is built on: the preview and the build draw
+   * the same mask because there is only one copy of it, and it came from the
+   * timeline. Editing the mask in After Effects shows up here on the next tick.
+   */
+  function adoptPath() {
+    if (state.params.mode !== 'curve') return;
+    var curve = (state.host && state.host.curve) || {};
+    var before = state.params.path;
+    if (curve.id && curve.id !== state.params.path) state.params.path = curve.id;
+
+    if (!curve.nodes) return;
+    var same = state.params.closed === !!curve.closed &&
+               JSON.stringify(state.params.nodes) === JSON.stringify(nodesOf(curve.nodes));
+    if (same && before === state.params.path) return;
+
+    state.params.nodes = nodesOf(curve.nodes);
+    state.params.closed = !!curve.closed;
+    renderGeometry();
+    refresh();
+  }
+
+  /** The wire form is six numbers a point; the renderer wants them named. */
+  function nodesOf(rows) {
+    return (rows || []).map(function (r) {
+      return { x: r[0], y: r[1], ox: r[2], oy: r[3], ix: r[4], iy: r[5] };
+    });
   }
 
   function watchHost(on) {
@@ -811,7 +680,7 @@
     var p = state.params;
     var preset = p.preset ? G.presetById(p.preset) : null;
     var text = JSON.stringify({
-      generator: 'mesh',
+      generator: p.mode,
       preset: preset ? preset.name : null,
       colorSpace: p.colorSpace.toUpperCase(),
       colors: p.colors,

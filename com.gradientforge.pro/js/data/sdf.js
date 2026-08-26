@@ -271,23 +271,35 @@
    * Anchors arrive in 0–1 of the frame ({ x, y, hx, hy } — the handle is an
    * offset, mirrored for a smooth anchor). Straight to pixels, then flattened.
    */
+  /**
+   * A mask path, flattened. In and out tangents are kept separate because a
+   * real After Effects mask keeps them separate — a point with a sharp corner
+   * on one side and a curve on the other is ordinary, and forcing one
+   * symmetric handle per point would quietly redraw the user's curve.
+   */
   function curveOutline(geom, w, h) {
     var nodes = geom.nodes || [];
     if (nodes.length < 2) return [];
-    var scale = h, ox = 0;
+    var scale = h;
     var px = nodes.map(function (n) {
+      // ox/oy and ix/iy are AE's own tangents. hx/hy is the older symmetric
+      // form, kept so a saved setting from before still draws.
+      var ox = n.ox !== undefined ? n.ox : (n.hx || 0);
+      var oy = n.oy !== undefined ? n.oy : (n.hy || 0);
+      var ix = n.ix !== undefined ? n.ix : -(n.hx || 0);
+      var iy = n.iy !== undefined ? n.iy : -(n.hy || 0);
       return {
-        p: [n.x * scale + ox, n.y * scale],
-        h: [(n.hx || 0) * scale, (n.hy || 0) * scale],
-        corner: !!n.corner
+        p: [n.x * scale, n.y * scale],
+        out: [ox * scale, oy * scale],
+        in: [ix * scale, iy * scale]
       };
     });
     var pts = [px[0].p];
     var last = px.length - (geom.closed ? 0 : 1);
     for (var i = 0; i < last; i++) {
       var a = px[i], b = px[(i + 1) % px.length];
-      bezier(a.p, [a.p[0] + a.h[0], a.p[1] + a.h[1]],
-             [b.p[0] - b.h[0], b.p[1] - b.h[1]], b.p, pts, 24);
+      bezier(a.p, [a.p[0] + a.out[0], a.p[1] + a.out[1]],
+             [b.p[0] + b.in[0], b.p[1] + b.in[1]], b.p, pts, 24);
     }
     return pts;
   }

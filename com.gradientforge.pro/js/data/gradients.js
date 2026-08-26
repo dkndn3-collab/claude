@@ -256,11 +256,6 @@
     { value: 'Courier New',         label: 'Courier' }
   ];
 
-  var SEAM_OPTS = [
-    { value: 'mirror', label: 'Mirror' },
-    { value: 'wrap',   label: 'Wrap' }
-  ];
-
   /**
    * `modes` limits a parameter to the generators it means something for, which
    * is how the visible slider set changes per mode instead of growing. Mesh
@@ -276,6 +271,9 @@
     { key: 'direction', label: 'Direction', type: 'number', value: 0, min: 0, max: 100, step: 1,
       group: 'main', modes: GEOMETRY_MODES,
       blurb: '0 = colour crosses the outline · 100 = colour runs along it' },
+    { key: 'offset', label: 'Offset', type: 'number', value: 0, min: -100, max: 100, step: 1,
+      group: 'main', modes: ['curve'],
+      blurb: 'moves the edge the ramp is measured from — in, or out' },
     { key: 'perLetter', label: 'Per letter', type: 'number', value: 0, min: 0, max: 100, step: 1,
       group: 'main', modes: ['letter'],
       blurb: '0 = one ramp across the word · 100 = a full ramp per glyph' },
@@ -285,7 +283,7 @@
        main slider in most modes and moves under Advanced in the ones that need
        the room. Five on the surface, always. */
     { key: 'grain',  label: 'Grain',  type: 'number', value: 18, min: 0, max: 100, step: 1,
-      group: 'main', advancedIn: ['letter'],
+      group: 'main', advancedIn: ['letter', 'curve'],
       blurb: 'texture, and the dither that kills banding' },
 
     { key: 'separation', label: 'Separation', type: 'number', value: 40, min: 0, max: 100, step: 1,
@@ -294,16 +292,14 @@
       group: 'advanced', modes: ['letter'] },
     { key: 'tracking', label: 'Tracking', type: 'number', value: 0, min: -20, max: 60, step: 1,
       group: 'advanced', modes: ['letter'] },
-    { key: 'seam',    label: 'Seam', type: 'select', value: 'mirror', options: SEAM_OPTS,
-      group: 'advanced', modes: ['curve'] },
     { key: 'loop',       label: 'Loop', type: 'number', value: 12, min: 2, max: 60, step: 1, unit: 's', group: 'advanced' },
     { key: 'seed',       label: 'Seed',        type: 'number', value: 431, min: 1, max: 9999, step: 1, group: 'advanced' },
     { key: 'colorSpace', label: 'Space', type: 'select', value: 'oklab', options: SPACE_OPTS, group: 'advanced' },
     { key: 'linearBlending', label: 'Linear', type: 'bool', value: true, group: 'advanced' },
 
-    /* Geometry row — shown only while a geometry mode is active. */
-    { key: 'fill',  label: 'Fill',  type: 'bool', value: false,
-      group: 'geometry', modes: ['curve'] },
+    /* Geometry row — shown only while a geometry mode is active. The Curve
+       tab's Path ▾ is built at render time instead, because its options are
+       whatever masks the comp has at that moment. */
     { key: 'text',  label: 'Text',  type: 'text', value: 'Gradient',
       group: 'geometry', modes: ['letter'], placeholder: 'Type something' },
     { key: 'font',  label: 'Font',  type: 'select', value: '', options: FONT_OPTS,
@@ -369,8 +365,10 @@
     out.colors = SIGNATURE[0].colors.slice();
     out.preset = null;
     out.mode = 'mesh';
-    // The pen tool's points are parameters like any other — they travel with
-    // Copy settings and survive loading a palette.
+    // Curve's geometry is not authored in the panel: `path` is which mask in
+    // the comp it reads, and `nodes`/`closed` are that mask's own path, kept
+    // here so the preview and the build work from one copy of it.
+    out.path = '';
     out.nodes = [];
     out.closed = false;
     return out;
@@ -462,6 +460,7 @@
       // know about — the rasteriser reads this, the colour pipeline does not.
       geometry: {
         mode: p.mode || 'mesh',
+        path: p.path || '',
         nodes: p.nodes || [],
         closed: !!p.closed,
         text: p.text,
@@ -471,9 +470,8 @@
         glyphCount: glyphCount(p),
         spread: p.spread,
         direction: p.direction,
-        perLetter: p.perLetter,
-        seam: p.seam,
-        fill: !!p.fill
+        offset: p.offset,
+        perLetter: p.perLetter
       },
       colors: colors,
       points: points,
