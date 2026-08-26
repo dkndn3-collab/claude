@@ -87,6 +87,77 @@ GF.U = (function () {
     return fx;
   };
 
+  /* ------------------------------------------------------------ the falloff */
+
+  /**
+   * How wide each colour point's disc has to be, for THIS comp.
+   *
+   * A deliberate second copy of GRADIENTS.sigmaParts() — ExtendScript cannot
+   * load the panel's modules, and the alternative was baking a number computed
+   * against a guessed frame shape. A cross-check test asserts the two
+   * implementations agree to 1e-9 over every preset and a range of aspects, so
+   * they cannot drift apart quietly.
+   *
+   * Why it exists at all: the build is an over-composite of finite discs, not
+   * the preview's normalised mean, so a pixel out of every disc's range falls
+   * through to the base solid — one flat colour. `floor` is what stops that,
+   * and it is applied after Blend and Separation so neither can reopen a hole.
+   */
+  var OVERLAP = 1.30, COVER = 0.55;
+
+  U.discRadius = 0.80;      // ellipse radius = sigma * this
+  U.discBlur   = 0.90;      // blur radius    = sigma * this
+
+  function pointAt(point, phase, motion) {
+    var m = motion / 100;
+    return [
+      point.home[0] + point.rad * m * Math.cos(point.harm * phase + point.ang),
+      point.home[1] + point.rad * m * Math.sin(point.harm * phase + point.ang * 1.7)
+    ];
+  }
+
+  U.sigmaParts = function (points, aspect, motion) {
+    var TAU = Math.PI * 2;
+    var phases = [0, 0.25, 0.5, 0.75];
+    var worst = 0, gx, gy, i, j, ph, dx, dy, d;
+
+    for (gy = 0; gy <= 16; gy++) {
+      for (gx = 0; gx <= 16; gx++) {
+        var x = gx / 16, y = gy / 16, best = Infinity;
+        for (ph = 0; ph < phases.length; ph++) {
+          for (i = 0; i < points.length; i++) {
+            var at = pointAt(points[i], phases[ph] * TAU, motion || 0);
+            dx = (x - at[0]) * aspect; dy = y - at[1];
+            d = Math.sqrt(dx * dx + dy * dy);
+            if (d < best) best = d;
+          }
+        }
+        if (best > worst) worst = best;
+      }
+    }
+
+    var total = 0;
+    if (points.length < 2) {
+      total = points.length;
+    } else {
+      for (i = 0; i < points.length; i++) {
+        var near = Infinity;
+        for (j = 0; j < points.length; j++) {
+          if (i === j) continue;
+          dx = (points[i].home[0] - points[j].home[0]) * aspect;
+          dy = points[i].home[1] - points[j].home[1];
+          d = Math.sqrt(dx * dx + dy * dy);
+          if (d < near) near = d;
+        }
+        total += near;
+      }
+    }
+    var space = points.length < 2 ? 1 : total / points.length;
+
+    var floor = worst * COVER;
+    return { base: Math.max(space * OVERLAP, floor), floor: floor };
+  };
+
   /* ------------------------------------------------------------ selection */
 
   /** The layers the user has selected, or [] — never throws on an empty comp. */

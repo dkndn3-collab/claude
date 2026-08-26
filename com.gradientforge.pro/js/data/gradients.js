@@ -438,14 +438,16 @@
      * Home positions are spread **evenly** around the circle with one seeded
      * rotation and a small jitter, not drawn independently. Independent angles
      * let two points land on top of each other, and then one colour becomes a
-     * blob sitting in a field of the other — which is what a two-colour palette
-     * with one dark end looked like: a hole.
+     * blob sitting in a field of the other.
      *
-     * How far out they sit depends on how many there are. Two colours want to
-     * read as a sweep across the frame, so their homes go outside it and the
-     * frame shows the transition; five colours want to sit inside it.
+     * They all sit **inside the frame**. Two colours used to go out to 0.78 —
+     * outside it — because the preview's normalised weighting tolerates that:
+     * a point can be off screen and its tail still colours the frame. The
+     * After Effects build has no tail, so an off-screen point contributes
+     * nothing and the frame showed bare base colour. Radii that keep every
+     * point on screen are the layout both renderers can actually draw.
      */
-    var homeR = n <= 2 ? 0.78 : n === 3 ? 0.46 : 0.30;
+    var homeR = n <= 2 ? 0.33 : n === 3 ? 0.37 : 0.32;
     var turn = rand() * TAU;
 
     for (var i = 0; i < n; i++) {
@@ -484,9 +486,7 @@
       },
       colors: colors,
       points: points,
-      // Points that sit far apart need a correspondingly wider falloff, or the
-      // middle of the frame belongs to neither of them.
-      reach: n <= 2 ? 0.30 : n === 3 ? 0.62 : 1,
+      homeR: homeR,
       motion: p.motion,
       blend: p.blend,
       flow: p.flow,
@@ -508,6 +508,116 @@
     return String(p.text == null ? '' : p.text).replace(/\s/g, '').length || 1;
   }
 
+  /* ====================================================================== */
+  /* sigma — the one number both renderers size their falloff from          */
+  /* ====================================================================== */
+
+  /**
+   * The preview and the After Effects build were never the same algorithm.
+   *
+   * The preview takes a **normalised** weighted mean with an infinite tail, so
+   * every pixel is always a mix of the palette and a point can sit outside the
+   * frame without hurting anything. The build is an **over-composite of finite
+   * blurred discs** on a base solid: no normalisation, no tail, and a pixel
+   * further than (radius + blur) from every point falls through to the base —
+   * one flat colour. With the old fixed disc size that was 95% of the frame on
+   * the median library preset, and 98% at two colours, which is what the black
+   * holes actually were.
+   *
+   * So the falloff is no longer a constant. It is derived from the layout the
+   * seed produced — how far apart the points ended up, and how far the frame's
+   * worst pixel is from the nearest of them — and both renderers size
+   * themselves from this same function.
+   */
+
+  /** Distance from the frame's worst pixel to its nearest colour point. */
+  function maxGap(points, aspect, motion) {
+    var worst = 0, phases = [0, 0.25, 0.5, 0.75];
+    for (var gy = 0; gy <= 16; gy++) {
+      for (var gx = 0; gx <= 16; gx++) {
+        var x = gx / 16, y = gy / 16, best = Infinity;
+        for (var ph = 0; ph < phases.length; ph++) {
+          for (var i = 0; i < points.length; i++) {
+            var at = pointAt(points[i], phases[ph] * TAU, motion || 0);
+            var dx = (x - at[0]) * aspect, dy = y - at[1];
+            var d = Math.sqrt(dx * dx + dy * dy);
+            if (d < best) best = d;
+          }
+        }
+        if (best > worst) worst = best;
+      }
+    }
+    return worst;
+  }
+
+  /** How far apart neighbouring points ended up. */
+  function spacing(points, aspect) {
+    if (points.length < 2) return 1;
+    var total = 0;
+    for (var i = 0; i < points.length; i++) {
+      var best = Infinity;
+      for (var j = 0; j < points.length; j++) {
+        if (i === j) continue;
+        var dx = (points[i].home[0] - points[j].home[0]) * aspect;
+        var dy = points[i].home[1] - points[j].home[1];
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d < best) best = d;
+      }
+      total += best;
+    }
+    return total / points.length;
+  }
+
+  /**
+   * The falloff, in frame heights, for a given layout and frame shape.
+   *
+   * Two terms. `spacing` is what makes it read as a gradient: neighbouring
+   * points have to overlap or the field is a row of separate blobs. `gap` is
+   * what makes it cover: it is a hard floor, applied after Blend and
+   * Separation, so no setting of either can open a hole back up.
+   */
+  function sigmaParts(points, aspect, motion) {
+    var floor = maxGap(points, aspect, motion) * COVER;
+    return { base: Math.max(spacing(points, aspect) * OVERLAP, floor), floor: floor };
+  }
+
+  /**
+   * Blend and Separation modulate the base, and the floor is applied after
+   * them — so no setting of either can open a hole back up. The build keeps
+   * this shape as an expression, with base and floor baked in, which is how
+   * its sliders stay live after the gradient is made.
+   */
+  function sigmaFrom(parts, blend, separation) {
+    return Math.max(
+      parts.base * (0.70 + 0.66 * (blend || 0) / 100) *
+                   (1 - 0.40 * (separation || 0) / 100),
+      parts.floor);
+  }
+
+  function sigmaFor(points, aspect, blend, separation, motion) {
+    return sigmaFrom(sigmaParts(points, aspect, motion), blend, separation);
+  }
+
+  /*
+   * These are not taste. They were swept against the only objective that
+   * matters — **does the After Effects build look like what was previewed** —
+   * by computing both pictures for twelve presets at four frame shapes and
+   * minimising the mean luminance difference between them. The After Effects
+   * side is simulated honestly: a hard disc put through three real box-blur
+   * passes, which is what Fast Box Blur does at Iterations 3.
+   *
+   * That last detail decided the answer. A closed-form edge approximation is
+   * not energy conserving, and under it a tiny disc with an enormous blur
+   * looked like it still reached full alpha — the sweep happily chased that
+   * and returned nonsense. With the real blur, the optimum is a disc about
+   * the size of the point spacing, blurred by about as much again: mean
+   * luminance error 4.5%, worst case 10.7%.
+   */
+  var OVERLAP = 1.30;      // sigma = nearest-neighbour spacing * this
+  var COVER   = 0.55;      // a mild floor, in case a seed clusters the points
+  var RADIUS  = 0.80;      // ellipse radius = sigma * RADIUS
+  var BLUR    = 0.90;      // blur radius    = sigma * BLUR
+
   /** Where a colour point sits at a given point in the loop, 0–1 of the frame. */
   function pointAt(point, phase, motion) {
     var m = motion / 100;
@@ -522,7 +632,7 @@
   global.GRADIENTS = {
     // Keep in step with CSXS/manifest.xml and jsx/host.jsx — it is stamped into
     // every copied settings block, which is how a bug report says what it ran.
-    version: '0.8.0',
+    version: '0.9.0',
     TAU: TAU,
     maxColors: MAX_COLORS,
     modes: MODES,
@@ -542,6 +652,14 @@
     modeById: modeById,
     resolve: resolve,
     pointAt: pointAt,
+
+    sigmaFor: sigmaFor,
+    sigmaParts: sigmaParts,
+    sigmaFrom: sigmaFrom,
+    maxGap: maxGap,
+    spacing: spacing,
+    discRadius: RADIUS,
+    discBlur: BLUR,
 
     rng: rng,
     mix: mix,

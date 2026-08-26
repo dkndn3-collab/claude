@@ -11,4 +11,4 @@
 #include "engine.jsx"
 #include "api.jsx"
 
-GF.version = '0.8.0';
+GF.version = '0.9.0';

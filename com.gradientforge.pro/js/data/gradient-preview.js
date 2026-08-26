@@ -41,7 +41,7 @@
     'uniform float uFlow;       // 0..1  domain warp',
     'uniform float uGrain;      // 0..1',
     'uniform float uSep;        // 0..1  soft field <-> distinct masses',
-    'uniform float uReach;      // widens the falloff when points sit far apart',
+    'uniform float uSharp;      // 1/(2·sigma²) — the falloff, sized in JS',
     'uniform float uSeed;',
     'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
     '',
@@ -211,7 +211,10 @@
     '     there is no seam and no banding structure to begin with. */',
     '  /* Separation tightens every point and thins the tail, so the colours',
     '     read as distinct masses instead of one continuous field. */',
-    '  float sharp = mix(26.0, 3.2, uBlend) * (1.0 + uSep * 1.8) * uReach;',
+    '  /* sharp comes from GRADIENTS.sigmaFor(), the same function the After',
+    '     Effects build sizes its discs from — so the two renderers cannot',
+    '     drift apart on how far a colour reaches. */',
+    '  float sharp = uSharp;',
     '  float tail  = 0.34 * (1.0 - 0.9 * uSep);',
     '',
     '  /* Two passes, and the first one exists purely for numerical safety.',
@@ -406,7 +409,7 @@
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     U = {};
-    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uReach', 'uSeed',
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSharp', 'uSeed',
      'uSpace', 'uMode', 'uSDF', 'uSpread', 'uOffset', 'uOpen', 'uDir',
      'uDepth', 'uSoft', 'uStyle', 'uSeam', 'uGlyphs']
       .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
@@ -487,7 +490,11 @@
     gl.uniform1f(U.uFlow, r.flow / 100);
     gl.uniform1f(U.uGrain, r.grain / 100);
     gl.uniform1f(U.uSep, (r.separation || 0) / 100);
-    gl.uniform1f(U.uReach, r.reach || 1);
+    // Aspect matters: a wider frame has corners further from every point, and
+    // the falloff has to cover them. The shader is told the answer rather than
+    // deriving it, so the build can compute the identical number for the comp.
+    var sigma = G.sigmaFor(r.points, w / h, r.blend, r.separation, r.motion);
+    gl.uniform1f(U.uSharp, 1 / (2 * sigma * sigma));
     gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
     gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
 

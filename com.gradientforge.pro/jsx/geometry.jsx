@@ -219,33 +219,43 @@ GF.Geom = (function () {
     },
 
     /**
+     * The matte carries a **copy of the path on a fresh comp-sized solid**, not
+     * a duplicate of the layer the mask happens to live on.
+     *
+     * The duplicate is what the first version did, and it was wrong: Fill
+     * paints the layer's own alpha, so the matte only ever contained the mask
+     * region *intersected with whatever that layer already drew*. Measured on
+     * the real stack: a mask on a solid gave 40% of the frame, the same mask on
+     * a shape layer with no shapes gave **nothing at all** — an empty track
+     * matte, and a gradient nobody could see. A mask on a text layer gave the
+     * glyphs, not the mask. Since a mask is a path and nothing else, the matte
+     * is built from the path and nothing else.
+     *
+     * It also means the solid carries exactly one mask, so the Stroke effect's
+     * Path menu can only be pointing at the right one.
+     *
      * A closed path has an interior, so the matte is the region itself. An open
      * one has none, so it is stroked — the one native way to get pixels out of
-     * an open path. Which of the two it is comes from the path, never from a
-     * toggle the user has to remember to match.
-     *
-     * Either way the blur that follows is what turns the edge into a ramp.
+     * an open path. Which it is comes from the path, never from a toggle.
      */
     matte: function (comp, source, p) {
-      var layer = copyOf(source.layer, 'GF MATTE — Curve');
-      var masks = U.masksOf(layer);
-      var index = 1;
-      for (var i = 0; i < masks.length; i++) {
-        try { if (masks[i].name === source.mask.name) index = i + 1; } catch (e) {}
-      }
+      var name = uniqueName(comp, 'GF MATTE — Curve');
+      var layer = comp.layers.addSolid([0, 0, 0], name, comp.width, comp.height, 1);
+      layer.name = name;
+      try { layer.motionBlur = false; } catch (e) {}
+
+      var mask = layer.property('ADBE Mask Parade').addProperty('ADBE Mask Atom');
+      try { mask.name = 'Path'; } catch (e2) {}
+      mask.property('ADBE Mask Shape').setValue(shapeOf(source, comp));
+      try { mask.maskFeather.setValue([0, 0]); } catch (e3) {}
+      mask.maskMode = source.closed ? MaskMode.ADD : MaskMode.NONE;
 
       if (source.closed) {
-        for (var m = 0; m < masks.length; m++) {
-          try {
-            masks[m].maskMode = (m + 1 === index) ? MaskMode.ADD : MaskMode.NONE;
-            masks[m].maskFeather.setValue([0, 0]);
-          } catch (e2) {}
-        }
         set(colorOf(fx(layer, 'ADBE Fill', 'Matte')), WHITE);
       } else {
         var stroke = fx(layer, 'ADBE Stroke', 'Matte');
         if (stroke) {
-          set(prop(stroke, 1, 'ADBE Stroke-0001'), index);            // Path
+          set(prop(stroke, 1, 'ADBE Stroke-0001'), 1);                // Path — the only one
           set(prop(stroke, 2, 'ADBE Stroke-0002'), false);            // All Masks
           set(colorOf(stroke), WHITE);                                // Color
           expr(prop(stroke, 4, 'ADBE Stroke-0004'),                   // Brush Size
@@ -255,6 +265,7 @@ GF.Geom = (function () {
           set(prop(stroke, 10, 'ADBE Stroke-0010'), 2);               // Paint Style: transparent
         } else {
           // No Stroke effect on this install — fall back to the mask region.
+          mask.maskMode = MaskMode.ADD;
           set(colorOf(fx(layer, 'ADBE Fill', 'Matte')), WHITE);
         }
       }
@@ -263,6 +274,29 @@ GF.Geom = (function () {
       return layer;
     }
   };
+
+  /**
+   * The path, as a Shape on a comp-sized solid. `source.nodes` are already in
+   * comp space over frame height — the same numbers the preview drew — so this
+   * is one multiplication, and the two renderers cannot end up on different
+   * curves.
+   */
+  function shapeOf(source, comp) {
+    var s = new Shape();
+    var k = comp.height;
+    var v = [], inT = [], outT = [];
+    for (var i = 0; i < source.nodes.length; i++) {
+      var n = source.nodes[i];
+      v.push([n.x * k, n.y * k]);
+      inT.push([(n.ix || 0) * k, (n.iy || 0) * k]);
+      outT.push([(n.ox || 0) * k, (n.oy || 0) * k]);
+    }
+    s.vertices = v;
+    s.inTangents = inT;
+    s.outTangents = outT;
+    s.closed = !!source.closed;
+    return s;
+  }
 
   /* ====================================================================== */
   /* letter — a text layer already in the timeline                          */

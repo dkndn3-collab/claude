@@ -214,6 +214,58 @@ One slider covers the whole useful range, which is why it is not two checkboxes.
 - The colour pipeline is untouched: same warp, same closed-circle loop, same
   dither, palette walked in OKLab in linear light.
 
+### The build is not the preview, and that was the bug
+
+The panel takes a **normalised** weighted mean with an infinite tail: every
+pixel is always a mix of the palette, and a colour point can sit outside the
+frame without hurting anything. The After Effects build is an **over-composite
+of finite blurred discs** on a base solid: no normalisation, no tail, and a
+pixel further than (radius + blur) from every point falls through to the base —
+one flat colour.
+
+The point layout was designed for the first of those and handed to the second.
+Two-colour palettes put their points at 0.78 of the frame from centre, which on
+a 1920×1080 comp is *outside it*, and the disc size was a constant that knew
+nothing about how far apart the points had ended up. Measured on the real layer
+stack: **the median library preset rendered 95% of the frame as bare base
+colour**, 319 of 400 were over 30%, and at two colours it was 98%. Since the
+base is `colours[0]` and the library orders palettes dark-to-light — four
+presets start at literal `#000000` — that flat region was the black hole.
+
+Two things changed. Every point now sits **inside** the frame, and the falloff
+is derived from the layout instead of being a constant: `GRADIENTS.sigmaFor()`
+sizes it from how far apart the points actually ended up and how far the frame's
+worst pixel is from the nearest of them. `jsx/core/utils.jsx` carries a second
+copy for the host, because ExtendScript cannot load the panel's modules; a test
+asserts the two agree to 1e-9 over every preset at six aspect ratios.
+
+The disc shape was swept against the only objective that matters — *does the
+build look like what was previewed* — by rendering both for twelve presets at
+four frame shapes. One detail decided it: the After Effects side has to be
+simulated with **three real box-blur passes**, because a closed-form edge
+approximation is not energy conserving and makes a tiny disc under an enormous
+blur look like it still reaches full alpha. With the real blur the answer is a
+disc about the size of the point spacing, blurred by about as much again.
+
+Result over 1600 renders (400 presets × 4 frame shapes): mean luminance
+difference from the preview **4.6%**, and **zero** renders containing a pixel
+darker than the darkest colour in their own palette.
+
+### The Curve matte comes from the path
+
+The first version duplicated the layer the mask was drawn on and filled its
+alpha — so the matte was the mask region *intersected with whatever that layer
+already drew*. Measured: a mask on a solid gave 40% of the frame; the same mask
+on a shape layer with no shapes gave **nothing at all**, an empty track matte
+and an invisible gradient; on a text layer it gave the glyphs rather than the
+mask.
+
+A mask is a path and nothing else, so the matte is now a fresh comp-sized solid
+carrying a **copy of that path** — the same numbers the preview drew, in comp
+space over frame height. All four source-layer types now produce the identical
+matte. It also means the solid carries exactly one mask, so the Stroke effect's
+Path menu can only be pointing at the right one.
+
 ### Curve reads the timeline
 
 **The pen tool was removed in v0.6.** After Effects already has a mask tool,

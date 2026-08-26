@@ -148,12 +148,25 @@ GF.Gradient = (function () {
     }
 
     /**
-     * The Gaussian's width in pixels, from Blend — the same sigma the
-     * preview's `sharp = mix(26, 3.2, blend)` works out to. Separation tightens
-     * every point, exactly as it tightens the preview's weighting.
+     * The falloff, sized for THIS comp and THIS layout.
+     *
+     * It used to be a constant fraction of frame height, which is what put the
+     * black holes there: the seed spreads the points further apart the fewer
+     * of them there are, and a fixed disc then reached nowhere near the frame —
+     * at two colours the points landed outside it entirely and 98% of the
+     * frame was bare base colour. `base` comes from how far apart the points
+     * actually ended up, `floor` from how far the frame's worst pixel is from
+     * the nearest of them, and the floor is applied last so no Blend or
+     * Separation setting can reopen a hole.
+     *
+     * Both are computed here, against the real comp aspect, and baked in —
+     * the sliders they multiply stay live.
      */
-    var SIGMA = 'thisComp.height * (0.139 + 0.256 * ' + R('Blend') + '/100)' +
-                ' * (1 - 0.45 * ' + R('Separation') + '/100)';
+    var sig = U.sigmaParts(p.points, comp.width / comp.height, p.motion);
+    var SIGMA = 'thisComp.height * Math.max(' + sig.base.toFixed(6) +
+                ' * (0.70 + 0.66 * ' + R('Blend') + '/100)' +
+                ' * (1 - 0.40 * ' + R('Separation') + '/100), ' +
+                sig.floor.toFixed(6) + ')';
 
     /* ---- base — the first colour, under everything ---------------------- */
 
@@ -179,7 +192,10 @@ GF.Gradient = (function () {
       var vectors = group.property('ADBE Vectors Group');
 
       var ell = vectors.addProperty('ADBE Vector Shape - Ellipse');
-      expr(ell.property('ADBE Vector Ellipse Size'), 's = ' + SIGMA + ' * 1.8;\n[s, s]');
+      // Diameter: the disc's flat centre plus the blur's soft edge together
+      // have to span the gap, which is what U.discRadius and U.discBlur are.
+      expr(ell.property('ADBE Vector Ellipse Size'),
+           's = ' + SIGMA + ' * ' + (U.discRadius * 2).toFixed(2) + ';\n[s, s]');
 
       var fill = vectors.addProperty('ADBE Vector Graphic - Fill');
       var fc = fill.property('ADBE Vector Fill Color');
@@ -201,7 +217,7 @@ GF.Gradient = (function () {
         ' (home[1] + rad * m * Math.sin(ph + ang * 1.7)) * thisComp.height]');
 
       // A blurred disc is the closest native thing to a Gaussian falloff.
-      U.fastBlur(layer, comp.height * 0.2, SIGMA + ' * 0.85');
+      U.fastBlur(layer, comp.height * 0.2, SIGMA + ' * ' + U.discBlur.toFixed(2));
     }
 
     /* ---- flow — one low-frequency warp over the whole field -------------- */
