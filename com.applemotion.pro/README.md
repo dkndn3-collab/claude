@@ -1,4 +1,4 @@
-# Apple Motion UI — v0.2.0
+# Apple Motion UI — v0.2.1
 
 A dockable After Effects panel that builds Apple-style UI components
 procedurally, with a real motion system and animated previews.
@@ -122,6 +122,7 @@ index.html              markup
 css/panel.css           AE-native chrome, chips, builder, play button
 js/
   lib/cep-bridge.js     evalScript / theme / host info
+  lib/controls.js       one labelled control per parameter definition
   data/tokens.js        ← design tokens: spacing, radius, duration, type, glass, palettes
   data/motion.js        ← the ten presets + spring physics, shared with AE
   data/library.js       ← every component, variant and parameter

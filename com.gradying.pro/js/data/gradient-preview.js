@@ -1,0 +1,608 @@
+/**
+ * gradient-preview.js — the panel-side renderer.
+ *
+ * The mesh engine as a fragment shader: Gaussian-weighted colour points blended
+ * in OKLab, a low-frequency domain warp, and dither on the way out (§4.5). It
+ * is the reference implementation — jsx/engine.jsx reproduces it with native
+ * After Effects layers, from the same numbers.
+ *
+ * Nothing here is loaded from disk. Every pixel is computed per frame.
+ *
+ * One WebGL context does all the work and blits into each target canvas, so a
+ * grid of preset tiles plus a live hero costs one context, not seven.
+ */
+(function (global) {
+  'use strict';
+
+  var G = global.GRADIENTS;
+  var MAX = G.maxColors;
+
+  /* ====================================================================== */
+  /* Shaders                                                                */
+  /* ====================================================================== */
+
+  var VERT = [
+    'attribute vec2 aPos;',
+    'void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }'
+  ].join('\n');
+
+  var FRAG = [
+    'precision highp float;',
+    '',
+    'uniform vec2  uRes;',
+    'uniform float uPhase;      // 0..TAU, one full loop',
+    'uniform float uTime;       // seconds, dither only',
+    'uniform vec3  uCol[' + MAX + '];',
+    'uniform vec2  uHome[' + MAX + '];',
+    'uniform vec3  uOrb[' + MAX + '];   // radius, harmonic, angle',
+    'uniform float uCount;',
+    'uniform float uMotion;     // 0..1',
+    'uniform float uBlend;      // 0..1  defined <-> soft',
+    'uniform float uFlow;       // 0..1  domain warp',
+    'uniform float uGrain;      // 0..1',
+    'uniform float uSep;        // 0..1  soft field <-> distinct masses',
+    'uniform float uSharp;      // 1/(2·sigma²) — the falloff, sized in JS',
+    'uniform float uSeed;',
+    'uniform float uSpace;      // 0 OKLab · 1 HCL · 2 linear sRGB',
+    '',
+    'uniform float uMode;       // 0 = mesh · 1 = geometry (SDF)',
+    'uniform sampler2D uSDF;    // R,G signed distance · B along · A glyph id',
+    'uniform float uSpread;     // ramp width across the boundary, frame heights',
+    'uniform float uOffset;    // moves the edge the ramp is measured from',
+    'uniform float uOpen;       // 1 = the geometry has no interior',
+    'uniform float uDir;        // 0 = across the boundary · 1 = along it',
+    'uniform float uDepth;      // how far the edges stand off the surface',
+    'uniform float uSoft;       // how wide the bevel is',
+    'uniform float uStyle;      // 0 = surface (lit) · 1 = refract (bent)',
+    'uniform float uSeam;       // 1 = mirror t so a closed path has no seam',
+    'uniform float uGlyphs;     // how many glyphs the text has',
+    '',
+    'const float TAU = 6.28318530718;',
+    '',
+    '/* ---------- transfer functions ---------- */',
+    'vec3 toLinear(vec3 c){',
+    '  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));',
+    '}',
+    'vec3 toSRGB(vec3 c){',
+    '  c = max(c, 0.0);',
+    '  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));',
+    '}',
+    '',
+    '/* ---------- OKLab (Björn Ottosson) ---------- */',
+    'vec3 lrgb2oklab(vec3 c){',
+    '  float l = 0.4122214708*c.r + 0.5363325363*c.g + 0.0514459929*c.b;',
+    '  float m = 0.2119034982*c.r + 0.6806995451*c.g + 0.1073969566*c.b;',
+    '  float s = 0.0883024619*c.r + 0.2817188376*c.g + 0.6299787005*c.b;',
+    '  return vec3(',
+    '    0.2104542553*pow(max(l,0.0),1.0/3.0) + 0.7936177850*pow(max(m,0.0),1.0/3.0) - 0.0040720468*pow(max(s,0.0),1.0/3.0),',
+    '    1.9779984951*pow(max(l,0.0),1.0/3.0) - 2.4285922050*pow(max(m,0.0),1.0/3.0) + 0.4505937099*pow(max(s,0.0),1.0/3.0),',
+    '    0.0259040371*pow(max(l,0.0),1.0/3.0) + 0.7827717662*pow(max(m,0.0),1.0/3.0) - 0.8086757660*pow(max(s,0.0),1.0/3.0));',
+    '}',
+    '/* Out-of-gamut OKLab maps to negative linear light, and a negative fed to',
+    '   pow() on the way to sRGB comes back NaN — which renders black, and in a',
+    '   32-bit float comp travels down the whole pipeline. Clamped here, at the',
+    '   encode, and once more at the very end. */',
+    'vec3 oklab2lrgb(vec3 c){',
+    '  float l_ = c.x + 0.3963377774*c.y + 0.2158037573*c.z;',
+    '  float m_ = c.x - 0.1055613458*c.y - 0.0638541728*c.z;',
+    '  float s_ = c.x - 0.0894841775*c.y - 1.2914855480*c.z;',
+    '  float l = l_*l_*l_, m = m_*m_*m_, s = s_*s_*s_;',
+    '  return max(vec3(',
+    '     4.0767416621*l - 3.3077115913*m + 0.2309699292*s,',
+    '    -1.2684380046*l + 2.6097574011*m - 0.3413193965*s,',
+    '    -0.0041960863*l - 0.7034186147*m + 1.7076147010*s), 0.0);',
+    '}',
+    '',
+    '/* ---------- noise — warp only, never colour (§4.5) ---------- */',
+    'float hash21(vec2 p){',
+    '  p = fract(p * vec2(123.34, 456.21));',
+    '  p += dot(p, p + 45.32);',
+    '  return fract(p.x * p.y);',
+    '}',
+    'float vnoise(vec2 p){',
+    '  vec2 i = floor(p), f = fract(p);',
+    '  vec2 u = f * f * (3.0 - 2.0 * f);',
+    '  float a = hash21(i);',
+    '  float b = hash21(i + vec2(1.0, 0.0));',
+    '  float c = hash21(i + vec2(0.0, 1.0));',
+    '  float d = hash21(i + vec2(1.0, 1.0));',
+    '  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);',
+    '}',
+    '',
+    '/* Grain doubles as dither, and every mode goes out through this one',
+    '   function. Even at Grain = 0 a sub-LSB amount stays in, because 8-bit',
+    '   output without dither WILL band on a smooth gradient (§4.5). */',
+    'vec3 dither(vec3 col){',
+    '  float g = hash21(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5;',
+    '  col = col + g * (0.9/255.0 + uGrain * 0.055);',
+    '  /* Last shield. NaN is the one value that is not equal to itself, which',
+    '     is the only way to catch it without an isnan() this GLSL level lacks. */',
+    '  if (!(col.r == col.r)) col.r = 0.0;',
+    '  if (!(col.g == col.g)) col.g = 0.0;',
+    '  if (!(col.b == col.b)) col.b = 0.0;',
+    '  return col;',
+    '}',
+    '',
+    '/* The ramp for the geometry modes: the palette walked in OKLab, in linear',
+    '   light, never in sRGB. The mesh path takes a weighted mean of the same',
+    '   colours; this walks them in order. Both end up in linear light. */',
+    'vec3 rampLin(float g){',
+    '  float n = max(uCount - 1.0, 1.0);',
+    '  float x = clamp(g, 0.0, 1.0) * n;',
+    '  bool lab = uSpace < 1.5;',
+    '  vec3 acc = lab ? lrgb2oklab(toLinear(uCol[0])) : toLinear(uCol[0]);',
+    '  for (int i = 0; i < ' + (MAX - 1) + '; i++) {',
+    '    float fi = float(i);',
+    '    float exists = step(fi + 1.5, uCount);',
+    '    float w = clamp(x - fi, 0.0, 1.0) * exists;',
+    '    vec3 nxt = lab ? lrgb2oklab(toLinear(uCol[i + 1])) : toLinear(uCol[i + 1]);',
+    '    acc = mix(acc, nxt, w);',
+    '  }',
+    '  return lab ? oklab2lrgb(acc) : acc;',
+    '}',
+    '',
+    'float sdfAt(vec2 p){',
+    '  vec4 f = texture2D(uSDF, p);',
+    '  return (f.r + f.g / 255.0 - 0.5) * 4.0;   // unpack 16-bit, ±2 heights',
+    '}',
+    '',
+    '/* The along-the-boundary coordinate, carried in B, with the glyph id in A.',
+    '   For text the two rebuild both readings: B is the position across one',
+    '   glyph, and B plus the glyph index is the position across the whole word,',
+    '   so Per-letter just blends between them. */',
+    'float alongAt(vec2 p){',
+    '  vec4 f = texture2D(uSDF, p);',
+    '  float t = f.b;',
+    '  /* One ramp across the whole word: the glyph index carries t forward so',
+    '     the run reads as one gradient rather than as N copies of it. */',
+    '  if (uGlyphs > 0.5) {',
+    '    float n = max(uGlyphs, 1.0);',
+    '    t = (f.a * (n - 1.0) + t) / n;',
+    '  }',
+    '  /* A closed path makes t cyclic. Reflecting it means t and 1-t give the',
+    '     same colour, so the ramp meets itself at the join instead of cutting;',
+    '     wrapping would need the first and last colour to match. */',
+    '  if (uSeam > 0.5) t = 1.0 - abs(2.0 * t - 1.0);',
+    '  return clamp(t, 0.0, 1.0);',
+    '}',
+    '',
+    '/* Volume, the same way the build gets it (§Letter).',
+    '',
+    '   The height field is the shape itself: flat inside, falling off across',
+    '   the edge over Softness. Its slope is therefore steepest exactly at the',
+    '   edge, which is where the bevel has to be. CC Glass differentiates this',
+    '   field internally in After Effects; here the derivative is taken by',
+    '   sampling, which is the same operation and the same result. */',
+    'float heightAt(vec2 p){',
+    '  float sd = sdfAt(clamp(p, 0.0, 1.0));',
+    '  float w = max(uSoft, 0.002);',
+    '  float h = clamp(-sd / w, 0.0, 1.0);',
+    '  return h * h * (3.0 - 2.0 * h);            // smoothstep: a rolled edge',
+    '}',
+    '',
+    'vec3 normalAt(vec2 p){',
+    '  float e = 1.2 / uRes.y;',
+    '  float dx = heightAt(p + vec2(e, 0.0)) - heightAt(p - vec2(e, 0.0));',
+    '  float dy = heightAt(p + vec2(0.0, e)) - heightAt(p - vec2(0.0, e));',
+    '  /* Depth scales the slope, not the height, so turning it up sharpens the',
+    '     bevel instead of inflating the whole glyph. */',
+    '  float k = uDepth * 70.0;',
+    '  return normalize(vec3(-dx * k, -dy * k, 1.0));',
+    '}',
+    '',
+    'void main(){',
+    '  vec2 uv = gl_FragCoord.xy / uRes;',
+    '  float aspect = uRes.x / uRes.y;',
+    '',
+    '  /* Domain warp. The sample offset travels a CLOSED CIRCLE in noise space,',
+    '     so the field is exactly back where it started at phase = TAU — a real',
+    '     loop, no cross-fade. The frequency is deliberately low: high-frequency',
+    '     warp is what makes a gradient read as smoke. */',
+    '  vec2 orbit = vec2(cos(uPhase), sin(uPhase)) * uMotion;',
+    '  float F = 1.15;',
+    '  float n1 = vnoise(uv * F + orbit * 0.42 + uSeed);',
+    '  float n2 = vnoise(uv * F + orbit.yx * vec2(-0.42, 0.42) + uSeed + 19.7);',
+    '  vec2 q  = vec2(n1, n2) - 0.5;',
+    '  float n3 = vnoise(uv * 0.72 + q * 0.9 + orbit * 0.3 + uSeed + 4.1);',
+    '  float n4 = vnoise(uv * 0.72 + q * 0.9 - orbit * 0.3 + uSeed + 31.3);',
+    '  vec2 p = uv + (vec2(n3, n4) - 0.5) * (uFlow * 0.85);',
+    '',
+    '  /* Gaussian-weighted blend of the colour points. C-infinity smooth, so',
+    '     there is no seam and no banding structure to begin with. */',
+    '  /* Separation tightens every point and thins the tail, so the colours',
+    '     read as distinct masses instead of one continuous field. */',
+    '  /* sharp comes from GRADIENTS.sigmaFor(), the same function the After',
+    '     Effects build sizes its discs from — so the two renderers cannot',
+    '     drift apart on how far a colour reaches. */',
+    '  float sharp = uSharp;',
+    '  float tail  = 0.34 * (1.0 - 0.9 * uSep);',
+    '',
+    '  /* Two passes, and the first one exists purely for numerical safety.',
+    '',
+    '     A weighted mean normalised by sum(w) fails wherever every w underflows:',
+    '     exp(-q) is exactly 0.0 in float once q passes ~88, the tail follows it',
+    '     down, sum(w) reaches 0, and a guard like max(sum, 1e-5) then scales the',
+    '     numerator toward black. That is what the black holes were — their soft',
+    '     curved edges were the isocontour where the underflow starts.',
+    '',
+    '     So find the largest weight first and divide both sides by it. The mean',
+    '     is identical (numerator and denominator scale together) but the largest',
+    '     weight is now exactly 1.0, sum(w) >= 1.0 always, and no epsilon is',
+    '     needed anywhere. Standard softmax stabilisation, applied to the whole',
+    '     weight and not only to its Gaussian half. */',
+    '',
+    '  float wmax = 0.0;',
+    '  for(int i = 0; i < ' + MAX + '; i++){',
+    '    if (float(i) > uCount - 0.5) continue;',
+    '    float ph = uPhase * uOrb[i].y;',
+    '    vec2 pos = uHome[i] + uOrb[i].x * uMotion *',
+    '               vec2(cos(ph + uOrb[i].z), sin(ph + uOrb[i].z * 1.7));',
+    '    vec2 d = (p - pos) * vec2(aspect, 1.0);',
+    '    float q = dot(d, d) * sharp;',
+    '    wmax = max(wmax, exp(-q) + tail / (1.0 + q * q * 4.0));',
+    '  }',
+    '  wmax = max(wmax, 1e-30);',
+    '',
+    '  vec3 acc = vec3(0.0);',
+    '  float wsum = 0.0;',
+    '  float chroma = 0.0;',
+    '',
+    '  for(int i = 0; i < ' + MAX + '; i++){',
+    '    if (float(i) > uCount - 0.5) continue;',
+    '',
+    '    float ph = uPhase * uOrb[i].y;',
+    '    vec2 pos = uHome[i] + uOrb[i].x * uMotion *',
+    '               vec2(cos(ph + uOrb[i].z), sin(ph + uOrb[i].z * 1.7));',
+    '',
+    '    vec2 d = (p - pos) * vec2(aspect, 1.0);',
+    '    float q = dot(d, d) * sharp;',
+    '    /* Gaussian core plus an inverse-quadratic tail: the tail never lets one',
+    '       point win outright, so distant areas fade into each other instead of',
+    '       snapping. Relative to wmax, so the nearest point weighs exactly 1. */',
+    '    float wt = (exp(-q) + tail / (1.0 + q * q * 4.0)) / wmax;',
+    '',
+    '    vec3 lab = lrgb2oklab(toLinear(uCol[i]));',
+    '    if(uSpace > 1.5) lab = toLinear(uCol[i]);      // linear sRGB blend',
+    '    acc    += lab * wt;',
+    '    chroma += length(lrgb2oklab(toLinear(uCol[i])).yz) * wt;',
+    '    wsum   += wt;',
+    '  }',
+    '',
+    '  vec3 mixed = acc / wsum;          // wsum >= 1.0 by construction',
+    '  vec3 lin;',
+    '',
+    '  /* Geometry mode: the same warped coordinate p, read against the signed',
+    '     distance field instead of against the colour points. Warp, loop and',
+    '     dither are untouched — only the gradient coordinate changes. */',
+    '  if (uMode > 0.5) {',
+    '    vec2 sp = clamp(p, 0.0, 1.0);',
+    '',
+    '    /* Coverage, taken before anything moves the sample point: this is the',
+    '       silhouette the After Effects build cuts with a track matte, so the',
+    '       preview shows the type filled with the gradient rather than a ramp',
+    '       across the whole frame. Two texels of it is the antialiasing. */',
+    '    float cover = 1.0;',
+    '    if (uGlyphs > 0.5) {',
+    '      float aa = 2.0 / uRes.y;',
+    '      cover = clamp(0.5 - sdfAt(sp) / (2.0 * aa), 0.0, 1.0);',
+    '    }',
+    '',
+    '    /* Volume first, because Refract has to move the point the colour is',
+    '       read at — after that both styles read the ramp the same way. */',
+    '    vec3 nrm = vec3(0.0, 0.0, 1.0);',
+    '    if (uDepth > 0.0) {',
+    '      nrm = normalAt(sp);',
+    '      if (uStyle > 0.5) sp = clamp(sp + nrm.xy * uDepth * 0.10, 0.0, 1.0);',
+    '    }',
+    '',
+    '    float sd = sdfAt(sp);',
+    '    float w = max(uSpread, 0.004);',
+    '    /* Two axes from one field: across the boundary, and along it. The',
+    '       Direction slider is a straight blend between them — one control',
+    '       instead of a mode switch, and every value in between is useful. */',
+    '    /* Offset slides the boundary the ramp is measured from, in the same',
+    '       units as the distance itself — in for positive, out for negative. */',
+    '    sd = sd + uOffset;',
+    '    float across = uOpen > 0.5 ? clamp(sd / w, 0.0, 1.0)',
+    '                               : clamp(0.5 + sd / (2.0 * w), 0.0, 1.0);',
+    '    float g = mix(across, alongAt(sp), uDir);',
+    '    vec3 lin = rampLin(g);',
+    '',
+    '    if (uDepth > 0.0) {',
+    '      /* One light, upper left, which is where CC Glass sits by default and',
+    '         where every viewer expects one. Lit in linear light, so the bevel',
+    '         does not go chalky the way an sRGB multiply would. */',
+    '      vec3 L = normalize(vec3(-0.52, -0.62, 0.59));',
+    '      float lam = max(dot(nrm, L), 0.0);',
+    '      float amb = uStyle > 0.5 ? 0.55 : 0.34;',
+    '      float dif = 1.0 - amb;',
+    '',
+    '      /* Normalised so a FLAT surface comes out at exactly 1.0. Without',
+    '         this the light points mostly at the viewer, every flat pixel is',
+    '         already fully lit, and tilting the edges has almost nothing left',
+    '         to give — the bevel washes out. Normalised, a flat interior keeps',
+    '         the colour it had and only the slopes move, up on the lit side and',
+    '         down on the other. That contrast IS the volume. */',
+    '      float level = amb + dif * max(L.z, 0.0);   // `flat` is reserved',
+    '      float shade = (amb + dif * lam) / max(level, 0.001);',
+    '',
+    '      float spec = pow(max(dot(reflect(-L, nrm), vec3(0.0, 0.0, 1.0)), 0.0),',
+    '                       uStyle > 0.5 ? 46.0 : 18.0);',
+    '      float sp2 = uStyle > 0.5 ? 0.42 : 0.30;',
+    '      lin = lin * shade + spec * sp2 * uDepth;',
+    '    }',
+    '',
+    '    /* Over a neutral ground, never a coloured one: the panel judges colour',
+    '       and a tinted backdrop would corrupt that judgement (§7). */',
+    '    lin = mix(vec3(0.0055), lin, cover);',
+    '',
+    '    gl_FragColor = vec4(dither(toSRGB(lin)), 1.0);',
+    '    return;',
+    '  }',
+    '',
+    '  if(uSpace > 1.5){',
+    '    lin = mixed;                                   // already linear light',
+    '  } else if(uSpace > 0.5){',
+    '    /* HCL: keep the weighted mean chroma instead of letting opposing hues',
+    '       cancel each other out, which is what dulls an OKLab mean. */',
+    '    float c = length(mixed.yz);',
+    '    float target = chroma / wsum;',
+    '    lin = oklab2lrgb(vec3(mixed.x, mixed.yz * (target / max(c, 1e-4))));',
+    '  } else {',
+    '    lin = oklab2lrgb(mixed);',
+    '  }',
+    '',
+    '  gl_FragColor = vec4(dither(toSRGB(lin)), 1.0);',
+    '}'
+  ].join('\n');
+
+  /* ====================================================================== */
+  /* One shared context                                                     */
+  /* ====================================================================== */
+
+  var gl = null, prog = null, U = null, surface = null, failed = false;
+  var sdf = null;                    // built on first use of a geometry mode
+  var buf = {
+    col:  new Float32Array(MAX * 3),
+    home: new Float32Array(MAX * 2),
+    orb:  new Float32Array(MAX * 3)
+  };
+
+  function init() {
+    if (gl || failed) return !!gl;
+    surface = document.createElement('canvas');
+    surface.width = 480; surface.height = 270;
+    try {
+      gl = surface.getContext('webgl', { antialias: false, alpha: false, preserveDrawingBuffer: true })
+        || surface.getContext('experimental-webgl', { antialias: false, alpha: false, preserveDrawingBuffer: true });
+    } catch (e) { gl = null; }
+    if (!gl) { failed = true; return false; }
+
+    function shader(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        if (global.console) console.error(gl.getShaderInfoLog(s));
+        return null;
+      }
+      return s;
+    }
+    var vs = shader(gl.VERTEX_SHADER, VERT), fs = shader(gl.FRAGMENT_SHADER, FRAG);
+    if (!vs || !fs) { gl = null; failed = true; return false; }
+
+    prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      if (global.console) console.error(gl.getProgramInfoLog(prog));
+      gl = null; failed = true; return false;
+    }
+    gl.useProgram(prog);
+
+    var vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    U = {};
+    ['uRes', 'uPhase', 'uTime', 'uCount', 'uMotion', 'uBlend', 'uFlow', 'uGrain', 'uSep', 'uSharp', 'uSeed',
+     'uSpace', 'uMode', 'uSDF', 'uSpread', 'uOffset', 'uOpen', 'uDir',
+     'uDepth', 'uSoft', 'uStyle', 'uSeam', 'uGlyphs']
+      .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+    U.uCol  = gl.getUniformLocation(prog, 'uCol[0]');
+    U.uHome = gl.getUniformLocation(prog, 'uHome[0]');
+    U.uOrb  = gl.getUniformLocation(prog, 'uOrb[0]');
+    return true;
+  }
+
+  /* ====================================================================== */
+  /* Render                                                                 */
+  /* ====================================================================== */
+
+  var SPACE_ID = { oklab: 0, hcl: 1, srgb: 2 };
+
+  /**
+   * Draw one frame of `params` into `canvas`.
+   * @param {Number} t seconds into the loop
+   */
+  function render(canvas, params, t) {
+    var rect = canvas.getBoundingClientRect();
+    var dpr = Math.min(global.devicePixelRatio || 1, 2);
+    var w = Math.max(24, Math.round((rect.width || 240) * dpr));
+    var h = Math.max(16, Math.round((rect.height || 135) * dpr));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+    if (!init()) { fallback(canvas, params, w, h); return; }
+
+    // The shared surface only has to be as big as the largest target.
+    if (surface.width < w || surface.height < h) {
+      surface.width = Math.max(surface.width, w);
+      surface.height = Math.max(surface.height, h);
+    }
+
+    var r = G.resolve(params);
+    var n = Math.min(r.colors.length, MAX);
+
+    /**
+     * Geometry modes: refresh the distance field first, because the SDF passes
+     * take over the framebuffer and the viewport. update() is a string compare
+     * on every frame but the ones where the geometry actually moved.
+     */
+    var geometry = r.mode !== 'mesh' && global.GRADIENT_SDF;
+    if (geometry) {
+      if (!sdf) sdf = global.GRADIENT_SDF.create(gl);
+      if (sdf) {
+        var side = 512;
+        sdf.update(r.geometry, side, Math.max(8, Math.round(side * h / w)));
+      } else {
+        geometry = false;              // no SDF programs — fall back to mesh
+      }
+    }
+
+    for (var i = 0; i < MAX; i++) {
+      var k = Math.min(i, n - 1);
+      var c = G.hexToRgb(r.colors[k]);
+      buf.col[i * 3] = c[0]; buf.col[i * 3 + 1] = c[1]; buf.col[i * 3 + 2] = c[2];
+      var pt = r.points[k];
+      buf.home[i * 2] = pt.home[0]; buf.home[i * 2 + 1] = pt.home[1];
+      buf.orb[i * 3] = pt.rad; buf.orb[i * 3 + 1] = pt.harm; buf.orb[i * 3 + 2] = pt.ang;
+    }
+
+    var phase = r.motion ? (t / Math.max(0.5, r.loop)) * G.TAU : 0;
+
+    // Draw into the bottom-left of the shared surface — gl_FragCoord then
+    // starts at 0, and that region is the last h rows of the canvas image.
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(prog);
+    gl.uniform2f(U.uRes, w, h);
+    gl.uniform1f(U.uPhase, phase);
+    gl.uniform1f(U.uTime, t);
+    gl.uniform3fv(U.uCol, buf.col);
+    gl.uniform2fv(U.uHome, buf.home);
+    gl.uniform3fv(U.uOrb, buf.orb);
+    gl.uniform1f(U.uCount, n);
+    gl.uniform1f(U.uMotion, r.motion / 100);
+    gl.uniform1f(U.uBlend, r.blend / 100);
+    gl.uniform1f(U.uFlow, r.flow / 100);
+    gl.uniform1f(U.uGrain, r.grain / 100);
+    gl.uniform1f(U.uSep, (r.separation || 0) / 100);
+    // Aspect matters: a wider frame has corners further from every point, and
+    // the falloff has to cover them. The shader is told the answer rather than
+    // deriving it, so the build can compute the identical number for the comp.
+    var sigma = G.sigmaFor(r.points, w / h, r.blend, r.separation, r.motion);
+    gl.uniform1f(U.uSharp, 1 / (2 * sigma * sigma));
+    gl.uniform1f(U.uSeed, (r.seed % 997) / 100);
+    gl.uniform1f(U.uSpace, SPACE_ID[r.colorSpace] || 0);
+
+    var gm = r.geometry;
+    gl.uniform1f(U.uMode, geometry ? 1 : 0);
+    gl.uniform1f(U.uSpread, (gm.spread || 40) / 100);
+    gl.uniform1f(U.uOffset, (gm.offset || 0) / 100 * 0.12);
+    gl.uniform1f(U.uOpen, geometry && sdf && sdf.open ? 1 : 0);
+    gl.uniform1f(U.uDir, (gm.direction || 0) / 100);
+    // Volume is Letter's; the other modes hand the shader a flat field.
+    var vol = r.mode === 'letter';
+    gl.uniform1f(U.uDepth, vol ? (gm.depth == null ? 55 : gm.depth) / 100 : 0);
+    // Softness is the bevel's width in frame heights. It has to stay small:
+    // a glyph stroke is only a few percent of the frame across, so a wide
+    // falloff would never reach full height and the slope would vanish.
+    gl.uniform1f(U.uSoft, 0.003 + (gm.softness == null ? 30 : gm.softness) / 100 * 0.055);
+    gl.uniform1f(U.uStyle, vol && gm.style === 'refract' ? 1 : 0);
+    // Only a closed run of t needs the seam treatment.
+    // A closed path's t is cyclic, so it is mirrored — always, and without
+    // asking: the seam is a property of the path, not a preference.
+    gl.uniform1f(U.uSeam, (r.mode !== 'letter' && !(sdf && sdf.open)) ? 1 : 0);
+    gl.uniform1f(U.uGlyphs, r.mode === 'letter' ? Math.max(1, gm.glyphCount || 1) : 0);
+    if (geometry) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sdf.texture);
+      gl.uniform1i(U.uSDF, 0);
+    }
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(surface, 0, surface.height - h, w, h, 0, 0, w, h);
+  }
+
+  /**
+   * No WebGL (a very old CEF, or a GPU-blocked host): draw the same colour
+   * points as radial blobs. No warp and no per-pixel colour space, but the
+   * palette and the layout still read correctly.
+   */
+  function fallback(canvas, params, w, h) {
+    var r = G.resolve(params);
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = r.colors[0];
+    ctx.fillRect(0, 0, w, h);
+    var radius = (0.35 + r.blend / 220) * Math.max(w, h);
+    for (var i = 0; i < r.points.length; i++) {
+      var pt = G.pointAt(r.points[i], 0, r.motion);
+      var g = ctx.createRadialGradient(pt[0] * w, pt[1] * h, 0, pt[0] * w, pt[1] * h, radius);
+      g.addColorStop(0, r.colors[i]);
+      g.addColorStop(1, hexToRgba(r.colors[i], 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  function hexToRgba(hex, a) {
+    var c = G.hexToRgb(hex);
+    return 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' +
+           Math.round(c[2] * 255) + ',' + a + ')';
+  }
+
+  /* ------------------------------------------------------------ animation */
+
+  var running = [];
+  var raf = null;
+  var start = 0;
+
+  function tick(now) {
+    raf = null;
+    if (!running.length) return;
+    var t = (now - start) / 1000;
+    for (var i = 0; i < running.length; i++) {
+      var job = running[i];
+      if (now - job.last < job.interval) continue;
+      job.last = now;
+      var p = job.params();
+      if (!p) continue;
+      try { render(job.canvas, p, t); } catch (e) { /* keep the loop alive */ }
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Keep a canvas playing. `paramsFn` is read every frame, so dragging a slider
+   * updates the animation in place.
+   */
+  function animate(canvas, paramsFn, fps) {
+    stop(canvas);
+    if (!start) start = performance.now();
+    running.push({ canvas: canvas, params: paramsFn, interval: 1000 / (fps || 30), last: 0 });
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+
+  function stop(canvas) {
+    running = running.filter(function (j) { return j.canvas !== canvas; });
+  }
+
+  function stopAll() { running = []; }
+
+  global.GRADIENT_PREVIEW = {
+    render: render,
+    animate: animate,
+    stop: stop,
+    stopAll: stopAll,
+    /** True once a GL context is up — asking for it is what brings it up. */
+    get accelerated() { return init(); },
+    /** How many times the distance field has been rebuilt this session. */
+    get sdfBuilds() { return sdf ? sdf.builds : 0; },
+    get sdfPasses() { return sdf ? sdf.passes : 0; }
+  };
+})(window);

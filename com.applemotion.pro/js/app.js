@@ -11,6 +11,7 @@
   'use strict';
 
   var L = window.LIBRARY, P = window.PREVIEWS, M = window.MOTION, A = window.ANIMATOR, TK = window.TOKENS;
+  var C = window.CONTROLS;
 
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -366,89 +367,14 @@
     return s;
   }
 
-  /** Build one labelled field bound to `target[key]`, calling onChange after. */
-  function fieldFor(p, target, onChange) {
-    var field = document.createElement('div');
-    field.className = 'field';
-    field.dataset.key = p.key;
-
-    var label = document.createElement('label');
-    label.textContent = p.label + (p.unit ? ' (' + p.unit + ')' : '');
-    label.setAttribute('for', 'f_' + p.key);
-    field.appendChild(label);
-
-    var control = document.createElement('div');
-    control.className = 'control';
-    control.appendChild(makeControl(p, target, onChange));
-    field.appendChild(control);
-    return field;
-  }
-
-  function makeControl(p, target, onChange) {
-    var frag = document.createDocumentFragment();
-    var fire = onChange || function () {};
-
-    if (p.type === 'number') {
-      var range = document.createElement('input');
-      range.type = 'range';
-      range.min = p.min; range.max = p.max; range.step = p.step || 1;
-      range.value = target[p.key];
-      var num = document.createElement('input');
-      num.type = 'number';
-      num.id = 'f_' + p.key;
-      num.min = p.min; num.max = p.max; num.step = p.step || 1;
-      num.value = target[p.key];
-      function commit(v) {
-        v = Math.max(p.min, Math.min(p.max, Number(v)));
-        if (isNaN(v)) v = p.min;
-        target[p.key] = v; range.value = v; num.value = v; fire(p.key);
-      }
-      range.addEventListener('input', function () { commit(range.value); });
-      num.addEventListener('change', function () { commit(num.value); });
-      frag.appendChild(range); frag.appendChild(num);
-
-    } else if (p.type === 'bool') {
-      var sw = document.createElement('button');
-      sw.type = 'button'; sw.className = 'switch'; sw.id = 'f_' + p.key;
-      sw.setAttribute('role', 'switch');
-      sw.setAttribute('aria-checked', String(!!target[p.key]));
-      sw.addEventListener('click', function () {
-        target[p.key] = !target[p.key];
-        sw.setAttribute('aria-checked', String(target[p.key]));
-        fire(p.key);
-      });
-      frag.appendChild(sw);
-
-    } else if (p.type === 'select') {
-      var sel = document.createElement('select');
-      sel.id = 'f_' + p.key;
-      p.options.forEach(function (o) {
-        var opt = document.createElement('option');
-        opt.value = o.value; opt.textContent = o.label;
-        if (o.value === target[p.key]) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', function () { target[p.key] = sel.value; fire(p.key); });
-      frag.appendChild(sel);
-
-    } else {
-      var txt = document.createElement('input');
-      txt.type = 'text'; txt.id = 'f_' + p.key; txt.value = target[p.key];
-      txt.addEventListener('input', function () { target[p.key] = txt.value; fire(p.key); });
-      frag.appendChild(txt);
-    }
-    return frag;
-  }
+  /** Controls are built by js/lib/controls.js. */
+  function fieldFor(p, target, onChange) { return C.field(p, target, onChange); }
 
   function onParamChange(key) {
     // Picking a glass material pulls its blur value in with it.
     if (key === 'glassPreset' && 'blur' in state.params) {
       state.params.blur = L.glassById(state.params.glassPreset).blur;
-      var f = el.sheetSections.querySelector('[data-key="blur"]');
-      if (f) {
-        var r = f.querySelector('input[type=range]'), n = f.querySelector('input[type=number]');
-        if (r) r.value = state.params.blur; if (n) n.value = state.params.blur;
-      }
+      C.sync(el.sheetSections, 'blur', state.params.blur);
     }
     // A variant chip changes many params, but toggling glass etc. can leave the
     // chosen variant stale — that's fine, the variant chips reflect last pick.

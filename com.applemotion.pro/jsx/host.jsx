@@ -22,4 +22,4 @@
 
 #include "api.jsx"
 
-AMUI.version = '0.2.0';
+AMUI.version = '0.2.1';
