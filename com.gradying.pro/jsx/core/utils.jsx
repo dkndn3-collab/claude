@@ -103,10 +103,10 @@ GY.U = (function () {
    * through to the base solid — one flat colour. `floor` is what stops that,
    * and it is applied after Blend and Separation so neither can reopen a hole.
    */
-  var OVERLAP = 1.30, COVER = 0.55;
+  var OVERLAP = 0.40, COVER = 0.35;
 
-  U.discRadius = 0.80;      // ellipse radius = sigma * this
-  U.discBlur   = 0.90;      // blur radius    = sigma * this
+  U.discRadius = 2.00;      // ellipse radius = sigma * this
+  U.discBlur   = 1.00;      // blur radius    = sigma * this
 
   function pointAt(point, phase, motion) {
     var m = motion / 100;
@@ -357,13 +357,43 @@ GY.U = (function () {
 
   /* --------------------------------------------------------------- effects */
 
-  U.fastBlur = function (layer, amount, expr) {
+  U.fastBlur = function (layer, amount, expr, repeatEdge) {
     var fx = layer.property('ADBE Effect Parade').addProperty('ADBE Box Blur2');
     fx.property(1).setValue(amount);                    // Blur Radius
     if (expr) fx.property(1).expression = expr;
     try { fx.property(2).setValue(3); } catch (e) {}    // Iterations — 3 reads as gaussian
-    try { fx.property(4).setValue(true); } catch (e) {} // Repeat Edge Pixels
+    /* Repeat Edge Pixels exists to stop a full-frame layer darkening at its
+       border. A colour point is a small disc on a transparent layer and has to
+       fade OUT, so repeating its edge is at best pointless and at worst clamps
+       the blur inside the layer bounds. Off unless the caller asks. */
+    try { fx.property(4).setValue(!!repeatEdge); } catch (e) {}
     return fx;
+  };
+
+  /**
+   * The palette's mean colour — what the base solid falls back to.
+   *
+   * Averaged in **linear light**. A component mean of the sRGB values is not
+   * the same thing and can come out darker than every colour it averaged:
+   * pure red and pure blue mean to a purple whose luminance is below both.
+   * That would put a dark patch back exactly where this is supposed to stop
+   * one appearing, so the conversion is not optional.
+   */
+  function toLin(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  function toSrgb(v) { return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055; }
+
+  U.meanColor = function (hexes) {
+    var r = 0, g = 0, b = 0;
+    for (var i = 0; i < hexes.length; i++) {
+      var c = U.hex(hexes[i]);
+      r += toLin(c[0]); g += toLin(c[1]); b += toLin(c[2]);
+    }
+    var n = Math.max(hexes.length, 1);
+    function ch(v) {
+      var s = Math.round(Math.max(0, Math.min(1, toSrgb(v / n))) * 255).toString(16);
+      return s.length < 2 ? '0' + s : s;
+    }
+    return '#' + ch(r) + ch(g) + ch(b);
   };
 
   return U;

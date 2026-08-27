@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="9.0"
                    ExtensionBundleId="com.gradying.panel"
-                   ExtensionBundleVersion="0.9.0"
+                   ExtensionBundleVersion="0.9.1"
                    ExtensionBundleName="Gradying"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="com.gradying.panel.main" Version="0.9.0"/>
+    <Extension Id="com.gradying.panel.main" Version="0.9.1"/>
   </ExtensionList>
 
   <ExecutionEnvironment>

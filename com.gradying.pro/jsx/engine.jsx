@@ -148,6 +148,32 @@ GY.Gradient = (function () {
     }
 
     /**
+     * The base solid is the palette's **mean**, not its first colour.
+     *
+     * It is what shows wherever no colour point reaches, and colours[0] was the
+     * worst possible choice for that: the library orders palettes dark to
+     * light, four of them start at literal #000000, so any gap read as a black
+     * hole. A mid tone is the one fallback that cannot be mistaken for a fault.
+     * It stays an expression so editing the colours in After Effects still
+     * moves it.
+     */
+    function meanExpr(n) {
+      var terms = [];
+      for (var i = 1; i <= n; i++) terms.push(R('Color ' + i));
+      /* Averaged in linear light — a component mean of the sRGB values can be
+         darker than every colour it averaged (red and blue mean to a purple
+         below both), which would put a dark patch exactly where this exists to
+         prevent one. */
+      return 'c = [' + terms.join(',\n     ') + '];\n' +
+        'function toLin(v){ return v <= 0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }\n' +
+        'function toSrgb(v){ return v <= 0.0031308 ? v*12.92 : 1.055*Math.pow(v, 1/2.4) - 0.055; }\n' +
+        'm = [0, 0, 0];\n' +
+        'for (i = 0; i < c.length; i++) for (k = 0; k < 3; k++) m[k] += toLin(c[i][k]);\n' +
+        '[toSrgb(m[0]/c.length), toSrgb(m[1]/c.length), toSrgb(m[2]/c.length), 1]' +
+        '.slice(0, value.length)';
+    }
+
+    /**
      * The falloff, sized for THIS comp and THIS layout.
      *
      * It used to be a constant fraction of frame height, which is what put the
@@ -175,8 +201,8 @@ GY.Gradient = (function () {
     var baseFill = addFx(base, 'ADBE Fill', 'Base Colour');
     if (baseFill) {
       var bc = colorProps(baseFill)[0];
-      set(bc, U.rgba(colors[0]));
-      expr(bc, colorExpr(1));
+      set(bc, U.rgba(U.meanColor(colors)));
+      expr(bc, meanExpr(colors.length));
     }
 
     /* ---- one soft colour point per stop --------------------------------- */

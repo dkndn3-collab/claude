@@ -599,24 +599,32 @@
   }
 
   /*
-   * These are not taste. They were swept against the only objective that
-   * matters — **does the After Effects build look like what was previewed** —
-   * by computing both pictures for twelve presets at four frame shapes and
-   * minimising the mean luminance difference between them. The After Effects
-   * side is simulated honestly: a hard disc put through three real box-blur
-   * passes, which is what Fast Box Blur does at Iterations 3.
+   * Swept against FOUR measurements, because every smaller set has produced a
+   * plausible-looking disaster:
    *
-   * That last detail decided the answer. A closed-form edge approximation is
-   * not energy conserving, and under it a tiny disc with an enormous blur
-   * looked like it still reached full alpha — the sweep happily chased that
-   * and returned nonsense. With the real blur, the optimum is a disc about
-   * the size of the point spacing, blurred by about as much again: mean
-   * luminance error 4.5%, worst case 10.7%.
+   *   nativeUsed  how much of the palette the After Effects build shows
+   *   panelUsed   how much of it the preview shows
+   *   apart       how far the two are from each other
+   *   edge        the 99th-percentile local luminance step — a gradient has
+   *               no edges, and a disc with too little blur has a visible rim
+   *
+   * The previous version optimised `apart` alone and shipped OVERLAP 1.30,
+   * which made sigma LARGER than the distance between the points. The topmost
+   * disc then flooded the frame — measured alpha 0.44 to 0.81 across the whole
+   * comp — so two-colour presets rendered as one flat colour, and where that
+   * colour was the dark stop it read as a hole. Two-colour palettes showed a
+   * median 33% of their range. Both renderers degraded together, so `apart`
+   * stayed green at 4.6% while both pictures were wrong. Agreement is not a
+   * result: two flat pictures agree perfectly.
+   *
+   * The After Effects side is simulated with three real box-blur passes, which
+   * is what Fast Box Blur does at Iterations 3. A closed-form edge is not
+   * energy conserving and sends the sweep somewhere useless.
    */
-  var OVERLAP = 1.30;      // sigma = nearest-neighbour spacing * this
-  var COVER   = 0.55;      // a mild floor, in case a seed clusters the points
-  var RADIUS  = 0.80;      // ellipse radius = sigma * RADIUS
-  var BLUR    = 0.90;      // blur radius    = sigma * BLUR
+  var OVERLAP = 0.40;      // sigma = nearest-neighbour spacing * this
+  var COVER   = 0.35;      // a mild floor, in case a seed clusters the points
+  var RADIUS  = 2.00;      // ellipse radius = sigma * RADIUS
+  var BLUR    = 1.00;      // blur radius    = sigma * BLUR
 
   /** Where a colour point sits at a given point in the loop, 0–1 of the frame. */
   function pointAt(point, phase, motion) {
@@ -632,7 +640,7 @@
   global.GRADIENTS = {
     // Keep in step with CSXS/manifest.xml and jsx/host.jsx — it is stamped into
     // every copied settings block, which is how a bug report says what it ran.
-    version: '0.9.0',
+    version: '0.9.1',
     TAU: TAU,
     maxColors: MAX_COLORS,
     modes: MODES,

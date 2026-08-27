@@ -234,6 +234,44 @@ build, regaining focus) asks immediately, so it still feels live.
 Measured in a real browser: **2 animation frames in 4 idle seconds**, against
 roughly 120 before, and zero of either while hidden.
 
+### Sizing the falloff, second attempt
+
+The first attempt swept the disc shape against one objective — *does the build
+match the preview* — and shipped `OVERLAP 1.30`, which made sigma **larger than
+the distance between the colour points**. The topmost disc then flooded the
+frame: measured alpha 0.44 to 0.81 across the whole comp. Two-colour palettes
+rendered as one flat colour, and where that colour was the dark stop it read as
+a hole. Two-colour presets showed a median **33%** of their palette range.
+
+Both renderers degraded together, so the agreement number stayed green at 4.6%
+while both pictures were wrong. **Agreement is not a result: two flat pictures
+agree perfectly.** The sweep now carries four measurements — how much of the
+palette the build shows, how much the preview shows, how far apart they are,
+and the 99th-percentile local luminance step, because "how much palette is on
+screen" would otherwise happily reward a hard-edged disc.
+
+`OVERLAP 0.40 · COVER 0.35 · RADIUS 2.00 · BLUR 1.00`. Over the whole library:
+
+| | median palette shown | under 35% | darker than its own palette |
+|---|---|---|---|
+| 2 colours, before | 33% | 42 of 60 | — |
+| 2 colours, after | **94%** | **0 of 225** | **0** |
+| 3–4 colours, after | 85% | 1 of 175 | 0 |
+
+Two more things came out of the same measurement:
+
+- **The base solid is the palette's mean, not `colours[0]`.** It is what shows
+  wherever no colour point reaches, and the first colour was the worst possible
+  choice — the library orders palettes dark to light and four start at literal
+  `#000000`, so any gap read as a black hole. The mean is taken in **linear
+  light**: a component mean of the sRGB values can come out darker than every
+  colour it averaged (red and blue mean to a purple below both), which would
+  put a dark patch back exactly where this exists to prevent one.
+- **Repeat Edge Pixels is off.** It exists to stop a full-frame layer darkening
+  at its border. A colour point is a small disc on a transparent layer that has
+  to fade *out*, so repeating its edge is at best pointless and at worst clamps
+  the blur inside the layer bounds.
+
 ### The build is not the preview, and that was the bug
 
 The panel takes a **normalised** weighted mean with an infinite tail: every
