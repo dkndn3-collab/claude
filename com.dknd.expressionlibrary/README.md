@@ -204,6 +204,24 @@ ile dogrulanir; kabul etmeyenler atlanir ve panelde rapor edilir.
 
 ---
 
+## 7. Test
+
+Sahte (mock) After Effects DOM'u uzerinde calisan regresyon testi:
+
+```bash
+node test/host.test.js
+```
+
+Kapsam:
+- `canSetExpression` dogrulamasi ve derin property arama (Source Text, Stroke Width,
+  Size, Slider; 3 seviye ic ice shape agaci)
+- `scope: auto` modunda elle secili property onceligi
+- Coklu katmana toplu uygulama ve hedef bulunamayinca temiz hata
+- Hata durumunda undo grubunun kapanmasi
+- `EXP_validate` icin string / regex literal / satir ve blok yorum atlama
+- 150 starter pack kaydinin tamami: parametre kalintisi yok, dogrulamadan geciyor,
+  client -> host JSON koprusunde kod bit bit ayni kaliyor
+
 ## 7. Dagitim (ZXP)
 
 Panel imzasiz olarak PlayerDebugMode ile calisir. Baskalarina dagitmak icin

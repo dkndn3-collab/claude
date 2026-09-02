@@ -418,23 +418,75 @@ function EXP_clear(payload) {
 function EXP_validate(code) {
     try {
         if (typeof code !== 'string' || !code.length) { return _err('Kod bos.'); }
-        // Basit denge kontrolu: parantez / kose parantez / suslu parantez
+
+        // Parantez dengesi kontrolu. String, regex literal ve yorum satirlari atlanir.
         var pairs = { '(': ')', '[': ']', '{': '}' };
         var stack = [];
-        var inStr = null;
+        var prev = '';   // en son anlamli (bosluk disi) karakter
+
         for (var i = 0; i < code.length; i++) {
             var c = code.charAt(i);
-            if (inStr) {
-                if (c === '\\') { i++; continue; }
-                if (c === inStr) { inStr = null; }
+            var next = code.charAt(i + 1);
+
+            // --- yorumlar
+            if (c === '/' && next === '/') {
+                while (i < code.length && code.charAt(i) !== '\n') { i++; }
                 continue;
             }
-            if (c === '"' || c === "'") { inStr = c; continue; }
-            if (pairs[c]) { stack.push(pairs[c]); continue; }
-            if (c === ')' || c === ']' || c === '}') {
-                if (stack.pop() !== c) { return _err('Sozdizimi hatasi: dengesiz "' + c + '" (karakter ' + (i + 1) + ')'); }
+            if (c === '/' && next === '*') {
+                i += 2;
+                while (i < code.length && !(code.charAt(i) === '*' && code.charAt(i + 1) === '/')) { i++; }
+                i++;
+                continue;
             }
+
+            // --- string literal
+            if (c === '"' || c === "'") {
+                var quote = c;
+                i++;
+                while (i < code.length) {
+                    var sc = code.charAt(i);
+                    if (sc === '\\') { i += 2; continue; }
+                    if (sc === quote) { break; }
+                    i++;
+                }
+                if (i >= code.length) { return _err('Sozdizimi hatasi: kapanmamis metin (string) var.'); }
+                prev = quote;
+                continue;
+            }
+
+            // --- regex literal  (orn: value.replace(/\(/g, ""))
+            // Bir "/" ancak deger beklenen bir konumda geliyorsa regex baslatir.
+            if (c === '/' && (prev === '' || '(,=:[!&|?{};+-*%~^<>'.indexOf(prev) !== -1)) {
+                i++;
+                var inClass = false;
+                var closed = false;
+                while (i < code.length) {
+                    var rc = code.charAt(i);
+                    if (rc === '\\') { i += 2; continue; }
+                    if (rc === '\n') { break; }
+                    if (rc === '[') { inClass = true; }
+                    else if (rc === ']') { inClass = false; }
+                    else if (rc === '/' && !inClass) { closed = true; break; }
+                    i++;
+                }
+                if (!closed) { return _err('Sozdizimi hatasi: kapanmamis regex (/.../) var.'); }
+                while (i + 1 < code.length && /[gimsuy]/.test(code.charAt(i + 1))) { i++; }
+                prev = '/';
+                continue;
+            }
+
+            // --- parantez dengesi
+            if (pairs[c]) { stack.push(pairs[c]); }
+            else if (c === ')' || c === ']' || c === '}') {
+                if (stack.pop() !== c) {
+                    return _err('Sozdizimi hatasi: dengesiz "' + c + '" (karakter ' + (i + 1) + ')');
+                }
+            }
+
+            if (!/\s/.test(c)) { prev = c; }
         }
+
         if (stack.length) { return _err('Sozdizimi hatasi: kapanmamis parantez var.'); }
         return _ok({ valid: true });
     } catch (e) {
