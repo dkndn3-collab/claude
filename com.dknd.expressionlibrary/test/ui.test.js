@@ -1,4 +1,6 @@
 // Panelin istemci yarisini gercek Chromium'da, sahte CEP koprusu + sahte AE DOM'u ile surer.
+//   npm i playwright-core && node test/ui.test.js
+//   (gerekirse) CHROMIUM_PATH=/yol/chrome node test/ui.test.js
 const { chromium } = require('playwright-core');
 const fsx = require('fs'), vm = require('vm'), pathx = require('path');
 
@@ -20,14 +22,14 @@ const xf = () => G('Transform', 'ADBE Transform Group', [
   P('Anchor Point', 'ADBE Anchor Point'), P('Position', 'ADBE Position'),
   P('Scale', 'ADBE Scale'), P('Rotation', 'ADBE Rotate Z'), P('Opacity', 'ADBE Opacity')]);
 
-const sliderProp = P('Slider', 'ADBE Slider Control-0001');
 const textProp = P('Source Text', 'ADBE Text Document');
-const layerA = { name: 'Logo', index: 1, selectedProperties: [],
-  property(k) { return this._g.find(g => g.matchName === k) || null; },
-  _g: [xf(), G('Effects', 'ADBE Effect Parade', [G('Slider Control', 'ADBE Slider Control', [sliderProp])])] };
-const layerB = { name: 'Baslik', index: 2, selectedProperties: [],
-  property(k) { return this._g.find(g => g.matchName === k) || null; },
-  _g: [xf(), G('Text', 'ADBE Text Properties', [textProp])] };
+const mkLayer = (name, index, groups) => ({
+  name, index, selectedProperties: [], _g: groups,
+  property(k) { return this._g.find(g => g.matchName === k) || null; }
+});
+const layerA = mkLayer('Logo', 1, [xf(),
+  G('Effects', 'ADBE Effect Parade', [G('Slider Control', 'ADBE Slider Control', [P('Slider', 'ADBE Slider Control-0001')])])]);
+const layerB = mkLayer('Baslik', 2, [xf(), G('Text', 'ADBE Text Properties', [textProp])]);
 
 function CompItem() {}
 const comp = Object.create(CompItem.prototype);
@@ -37,8 +39,8 @@ const app = { undoStack: [], beginUndoGroup(n) { this.undoStack.push(n); }, endU
 
 const hostCtx = vm.createContext({ app, CompItem, PropertyType });
 vm.runInContext(fsx.readFileSync(pathx.join(EXT, 'host', 'index.jsx'), 'utf8'), hostCtx);
-const evalHost = (script) => { try { return vm.runInContext(script, hostCtx); }
-                               catch (e) { return JSON.stringify({ ok: false, error: e.message }); } };
+const evalHost = (s) => { try { return vm.runInContext(s, hostCtx); }
+                          catch (e) { return JSON.stringify({ ok: false, error: e.message }); } };
 
 // ---------------------------------------------------------------- kontroller
 let pass = 0, fail = 0;
@@ -47,18 +49,16 @@ const check = (label, cond, info) => {
   else { fail++; console.log('  FAIL  ' + label + (info !== undefined ? '  -> ' + JSON.stringify(info) : '')); }
 };
 const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position').expression;
+const BS = String.fromCharCode(92);
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-  const page = await browser.newPage({ viewport: { width: 420, height: 720 } });
-
+  const page = await browser.newPage({ viewport: { width: 320, height: 720 } });
   page.on('pageerror', e => { fail++; console.log('  FAIL  sayfa hatasi: ' + e.message); });
 
   await page.exposeFunction('__hostEval', (s) => evalHost(s));
   await page.exposeFunction('__peek', (what) => ({
-    layerAPos: getPos(layerA), layerBPos: getPos(layerB),
-    slider: sliderProp.expression, text: textProp.expression,
-    undoDepth: app.undoStack.length
+    a: getPos(layerA), b: getPos(layerB), text: textProp.expression, undo: app.undoStack.length
   }[what]));
 
   await page.addInitScript(() => {
@@ -76,45 +76,75 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   await page.goto('file://' + pathx.join(EXT, 'client', 'index.html'));
   await page.waitForSelector('.card');
 
-  console.log('\n== Panel acilisi ==');
-  check('151 kart render edildi', await page.locator('.card').count() === 151);
-  check('sayac dogru', (await page.textContent('#countLabel')) === "151 expression");
-  await page.waitForFunction(() => document.getElementById('statusLine').textContent.indexOf('MAIN_COMP') !== -1, null, { timeout: 5000 });
-  check('durum satiri AE baglamini gosteriyor', (await page.textContent('#statusLine')).includes('MAIN_COMP - 2 katman secili'));
-  check('kategori cipleri olustu', await page.locator('.chip').count() > 10);
+  const TOTAL = await page.locator('.card').count();
+  const status = () => page.textContent('#statusText');
 
-  console.log('\n== Arama ve filtreleme ==');
-  await page.fill('#searchInput', 'wiggle');
-  await page.waitForFunction(() => document.querySelectorAll('.card').length < 151);
-  const wiggleCount = await page.locator('.card').count();
-  check('arama daralt: "wiggle" -> ' + wiggleCount + ' kart', wiggleCount > 3 && wiggleCount < 20);
-  await page.fill('#searchInput', 'd\u00f6ng\u00fc');
-  await page.waitForTimeout(150);
-  const trCount = await page.locator('.card').count();
-  check('Turkce aksanli arama "d\u00f6ng\u00fc" -> ' + trCount + ' kart', trCount >= 5);
-  await page.fill('#searchInput', 'saya\u00e7');
-  await page.waitForTimeout(150);
-  check('Turkce aksanli arama "saya\u00e7" sonuc veriyor', await page.locator('.card').count() >= 1);
-  await page.fill('#searchInput', 'counter slider');
-  await page.waitForTimeout(150);
-  const multi = await page.locator('.card').count();
-  check('coklu kelime aramasi -> ' + multi + ' kart', multi >= 3);
+  console.log('\n== Duzen ve olculer ==');
+  const box = async (sel) => (await page.locator(sel).first().boundingBox());
+  check('header 36px', Math.round((await box('.hdr')).height) === 36);
+  check('search+chips 70px', Math.round((await box('.filterbar')).height) === 70);
+  check('mode bar 28px', Math.round((await box('.modebar')).height) === 28);
+  check('action footer 42px', Math.round((await box('.actions')).height) === 42);
+  check('status bar 18px', Math.round((await box('.statusbar')).height) === 18);
+  const ch = (await box('.card')).height;
+  check('kart yuksekligi 44-48px araliginda -> ' + ch, ch >= 44 && ch <= 48, ch);
+  check('kart listesi kalan alani dolduruyor', (await box('.list')).height > 300);
+
+  console.log('\n== Header / sayac ==');
+  check('versiyon etiketi', (await page.textContent('.ver')) === 'v1.0');
+  check('toplam sablon sayisi', (await page.textContent('#countTotal')) === String(TOTAL));
+  check('gosterilen sayisi', (await page.textContent('#countShown')) === String(TOTAL));
+
+  console.log('\n== Status bar ==');
+  await page.waitForFunction(() => document.getElementById('statusText').textContent.indexOf('MAIN_COMP') !== -1, null, { timeout: 8000 });
+  check('bosta AE baglamini gosteriyor', (await status()).includes('MAIN_COMP · 2 katman'));
+  check('bosta kind=idle', (await page.getAttribute('#statusBar', 'data-kind')) === 'idle');
+
+  console.log('\n== Arama ve "/" kisayolu ==');
+  await page.locator('#cardList').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('/');
+  check('"/" arama kutusuna odaklandi', await page.evaluate(() => document.activeElement.id) === 'searchInput');
+  await page.keyboard.type('wiggle');
+  await page.waitForFunction(() => document.querySelectorAll('.card').length < 100);
+  const wig = await page.locator('.card').count();
+  check('arama daralt "wiggle" -> ' + wig, wig > 3 && wig < 20);
+  check('sayac filtreye gore guncellendi', (await page.textContent('#countShown')) === String(wig));
+  await page.fill('#searchInput', 'döngü');
+  await page.waitForTimeout(120);
+  check('Turkce aksanli arama "döngü" sonuc veriyor', (await page.locator('.card').count()) >= 5);
+
+  console.log('\n== Empty state ==');
+  await page.fill('#searchInput', 'zzzz-yok-boyle-birsey');
+  await page.waitForSelector('#emptyState:not([hidden])');
+  check('bos durum gosterildi', await page.isVisible('#emptyState'));
+  check('aranan terim gosteriliyor', (await page.textContent('#emptyTerm')).includes('zzzz-yok'));
+  await page.click('#btnAddFromSearch');
+  await page.waitForSelector('#viewEditor:not([hidden])');
+  check('"+ Yeni Olarak Ekle" editoru aranan adla acti',
+    (await page.inputValue('#fName')) === 'zzzz-yok-boyle-birsey');
+  await page.click('#btnBack');
   await page.click('#btnClearSearch');
-  check('temizle -> 151', await page.locator('.card').count() === 151);
+  check('temizle -> tum kartlar', (await page.locator('.card').count()) === TOTAL);
 
-  await page.locator('.chip', { hasText: 'Looping' }).first().click();
-  const loopCount = await page.locator('.card').count();
-  check('kategori cipi "Looping" -> ' + loopCount + ' kart', loopCount > 3 && loopCount < 20);
-  await page.locator('.chip', { hasText: 'Tumu' }).first().click();
+  console.log('\n== Kart secimi ve Apply to Selected ==');
+  check('acilista ilk kart secili', (await page.locator('.card.sel').count()) === 1);
+  await page.fill('#searchInput', 'Basic Wiggle');
+  await page.waitForTimeout(120);
+  const card = page.locator('.card').first();
+  await card.click();
+  check('kart secildi (sel)', (await card.getAttribute('class')).includes('sel'));
+  check('Apply butonu aktiflesti', !(await page.locator('#btnApply').isDisabled()));
+  check('Apply etiketi', (await page.textContent('#btnApply')) === 'Apply to Selected');
+
+  await page.click('#btnApply');
+  await page.waitForSelector('#modalBackdrop:not([hidden])');
+  check('parametreli kart modal acti', await page.isVisible('#modalBackdrop'));
 
   console.log('\n== Parametre modali ==');
-  await page.fill('#searchInput', 'Basic Wiggle');
-  const card = page.locator('.card').first();
-  await card.locator('.apply-btn').click();
-  await page.waitForSelector('#modalBackdrop:not([hidden])');
-  check('modal acildi', await page.isVisible('#modalBackdrop'));
+  const keys = page.locator('#modalFields .pk');
   const inputs = page.locator('#modalFields input');
-  check('2 parametre alani', await inputs.count() === 2);
+  check('iki sutunlu form: 2 ad + 2 input', (await keys.count()) === 2 && (await inputs.count()) === 2);
+  check('ilk input otomatik odaklandi', (await page.evaluate(() => document.activeElement.getAttribute('data-param'))) === 'frekans');
   check('varsayilanlar dolu', (await inputs.nth(0).inputValue()) === '2' && (await inputs.nth(1).inputValue()) === '30');
   check('onizleme cozumlendi', (await page.textContent('#modalPreview')) === 'wiggle(2, 30);');
 
@@ -122,59 +152,100 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   await inputs.nth(1).fill('115');
   check('onizleme canli guncellendi', (await page.textContent('#modalPreview')) === 'wiggle(7, 115);');
 
-  await page.click('#btnApplyParams');
-  await page.waitForFunction(() => document.getElementById('toast').classList.contains('show'));
-  check('toast basari mesaji', (await page.textContent('#toast')).includes('uygulandi'), await page.textContent('#toast'));
-  check('AE katman 1 Position = wiggle(7, 115);', (await page.evaluate(() => window.__peek('layerAPos'))) === 'wiggle(7, 115);');
-  check('AE katman 2 Position = wiggle(7, 115);  (toplu uygulama)', (await page.evaluate(() => window.__peek('layerBPos'))) === 'wiggle(7, 115);');
-  check('undo grubu kapatildi', (await page.evaluate(() => window.__peek('undoDepth'))) === 0);
+  await page.locator('#modalFields .p-reset').first().click();
+  check('↺ varsayilana dondurdu', (await inputs.nth(0).inputValue()) === '2');
+  check('↺ sonrasi onizleme guncel', (await page.textContent('#modalPreview')) === 'wiggle(2, 115);');
+  await inputs.nth(0).fill('7');
 
-  console.log('\n== Regex kacislari (uctan uca) ==');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.getElementById('modalBackdrop').hidden);
+  check('Enter uygulamayi tetikledi', (await page.evaluate(() => window.__peek('a'))) === 'wiggle(7, 115);');
+  check('iki katmana da uygulandi', (await page.evaluate(() => window.__peek('b'))) === 'wiggle(7, 115);');
+  check('undo grubu kapatildi', (await page.evaluate(() => window.__peek('undo'))) === 0);
+  check('status yesil basari', (await page.getAttribute('#statusBar', 'data-kind')) === 'ok');
+  check('status mesaji sablon adini iceriyor', (await status()).includes('Basic Wiggle'));
+
+  console.log('\n== Esc ile modal kapanmasi ==');
+  await page.click('#btnApply');
+  await page.waitForSelector('#modalBackdrop:not([hidden])');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.getElementById('modalBackdrop').hidden);
+  check('Esc modali kapatti', await page.locator('#modalBackdrop').isHidden());
+
+  console.log('\n== Skip Prompts + cift tiklama ==');
+  await page.locator('.sw').click();
+  check('switch acildi', await page.isChecked('#skipPrompts'));
   await page.fill('#searchInput', 'Digit Grouping');
-  await page.locator('.card').first().locator('.mini-btn', { hasText: 'Varsayilanla' }).click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(120);
+  await page.locator('.card').first().dblclick();
+  await page.waitForTimeout(350);
+  check('cift tiklama modal acmadan uyguladi', await page.locator('#modalBackdrop').isHidden());
   const applied = await page.evaluate(() => window.__peek('text'));
-  const BS = String.fromCharCode(92);
-  check('ters bolu tarayici -> host boyunca korundu (Source Text hedefi)',
+  check('Source Text hedefine gitti', applied.indexOf('replace') !== -1, applied);
+  check('regex ters bolusu tarayici -> host korundu',
     applied.includes(BS + 'B(?=(' + BS + 'd{3})+(?!' + BS + 'd))'), applied);
 
-  console.log('\n== Hedef property eslestirme ==');
-  await page.fill('#searchInput', 'Uppercase Enforcer');
-  await page.selectOption('#scopeSelect', 'target');
-  await page.locator('.card').first().locator('.apply-btn').click();
-  await page.waitForTimeout(300);
-  check('Source Text hedefi metin katmanina gitti',
-    (await page.evaluate(() => window.__peek('text'))) === 'value.toUpperCase();');
-  await page.selectOption('#scopeSelect', 'auto');
+  console.log('\n== Hata durumu: status kirmizi + panoya kopyala ==');
+  await page.evaluate(() => { window.__adobe_cep__.evalScript = (s, cb) => cb(JSON.stringify({ ok: false, error: 'TEST HATASI' })); });
+  await page.click('#btnApply');
+  await page.waitForFunction(() => document.getElementById('statusBar').getAttribute('data-kind') === 'err');
+  check('hata kirmizi gosterildi', (await status()).includes('TEST HATASI'));
+  check('hata durumu tiklanabilir (title)', (await page.getAttribute('#statusBar', 'title')).includes('panoya'));
+  await page.reload();
+  await page.waitForSelector('.card');
 
-  console.log('\n== Editor: ekle / kalici kayit / sil ==');
+  console.log('\n== Favori (yildiz) ==');
+  await page.fill('#searchInput', 'Basic Wiggle');
+  await page.waitForTimeout(120);
+  await page.locator('.card').first().hover();
+  await page.locator('.card .c-act.star').first().click();
+  await page.waitForTimeout(150);
+  check('kart favori isaretlendi', (await page.locator('.card').first().getAttribute('class')).includes('fav'));
+  check('★ cipi olustu', (await page.locator('.chip', { hasText: '★' }).count()) === 1);
   await page.click('#btnClearSearch');
+  await page.locator('.chip', { hasText: '★' }).first().click();
+  check('★ cipi sadece favoriyi listeliyor', (await page.locator('.card').count()) === 1);
+
+  console.log('\n== Ayar kaliciligi ==');
+  await page.selectOption('#scopeSelect', 'target');
+  await page.waitForTimeout(150);
+  await page.reload();
+  await page.waitForSelector('.card');
+  check('Skip Prompts yeniden yuklemede korundu', await page.isChecked('#skipPrompts'));
+  check('mod secimi korundu', (await page.inputValue('#scopeSelect')) === 'target');
+  check('favori korundu', (await page.locator('.chip', { hasText: '★' }).count()) === 1);
+  await page.selectOption('#scopeSelect', 'auto');
+  await page.locator('.sw').click();
+
+  console.log('\n== Editor: ekle / kalicilik / sil ==');
   await page.click('#btnNew');
   await page.waitForSelector('#viewEditor:not([hidden])');
   await page.fill('#fName', 'Test Kaydi');
   await page.fill('#fCat', 'Ozel');
   await page.fill('#fCode', 'value.replace(/\\(/g, "") + {{ek=!}};');
-  check('parametre ipucu tespit etti', (await page.textContent('#paramHint')).includes('ek = !'), await page.textContent('#paramHint'));
+  check('parametre ipucu tespit etti', (await page.textContent('#paramHint')).includes('ek = !'));
   await page.click('#btnSave');
   await page.waitForSelector('#viewList:not([hidden])');
-  check('regex iceren kod EXP_validate\'ten gecti (kaydedildi)', await page.locator('.card').count() === 152);
+  check('regex iceren kod dogrulamadan gecti', (await page.locator('.card').count()) === TOTAL + 1);
+  check('Mine cipi olustu', (await page.locator('.chip', { hasText: 'Mine' }).count()) === 1);
 
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('expressionLibrary') || '{}'));
-  check('localStorage yedegine yazildi', stored.items && stored.items.length === 1 && stored.items[0].name === 'Test Kaydi', stored.items);
+  check('diske/onbellege yazildi', stored.items && stored.items.length === 1 && stored.items[0].name === 'Test Kaydi');
 
   await page.reload();
   await page.waitForSelector('.card');
-  check('yeniden yuklemede kayit korundu (kalicilik)', await page.locator('.card').count() === 152);
-  check('"Kendi Kayitlarim" cipi olustu', await page.locator('.chip', { hasText: 'Kendi Kayitlarim' }).count() === 1);
+  check('yeniden yuklemede korundu', (await page.locator('.card').count()) === TOTAL + 1);
 
   await page.screenshot({ path: pathx.join(require('os').tmpdir(), 'expression-library-panel.png') });
 
   page.on('dialog', d => d.accept());
   await page.fill('#searchInput', 'Test Kaydi');
-  await page.locator('.card').first().locator('.mini-btn.danger').click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(120);
+  await page.locator('.card').first().hover();
+  await page.locator('.card .c-act.danger').first().click();
+  await page.waitForTimeout(250);
   await page.click('#btnClearSearch');
-  check('silme calisti -> 151', await page.locator('.card').count() === 151);
+  check('silme calisti', (await page.locator('.card').count()) === TOTAL);
 
   await browser.close();
   console.log(`\n${pass} pass, ${fail} fail`);

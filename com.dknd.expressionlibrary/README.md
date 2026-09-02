@@ -6,7 +6,10 @@ expression atayan, kendi expression'larinizi ekleyip duzenleyebildiginiz,
 modern ve minimal bir panel eklentisi.
 
 - **151 hazir expression** (dahili starter pack, 98 tanesi parametrik)
-- Kategori cipleri + coklu kelime arama
+- Dar panel (280-350 px) icin tasarlanmis yogun, sabit yukseklikli dikey duzen
+- Kategori cipleri + coklu kelime arama (Turkce aksan duyarsiz)
+- Klavyeyle tam kullanim: `/` ara, `↑`/`↓` gez, `Enter` uygula
+- Favoriler, Skip Prompts ve uygulama modu diske kaydedilir
 - Parametre modali ("Uygula") veya tek tikla "Varsayilanla" uygulama
 - Coklu katman secimine toplu uygulama + akilli property eslestirme
 - Tek `Undo` grubu (Cmd/Ctrl+Z ile tum islem geri alinir)
@@ -93,22 +96,55 @@ After Effects'i yeniden baslatin →
 
 ## 3. Kullanim
 
-1. Timeline'da bir veya birden fazla **katman** secin.
-   (Istege bagli: dogrudan bir **property** de secebilirsiniz — Position, Scale, bir efekt slider'i vb.)
-2. Panelde arama yapin veya kategori cipine tiklayin.
-3. Karta tiklayarak kodu genisletip inceleyin.
-4. **Uygula**'ya basin:
-   - Kod parametre iceriyorsa modal acilir, degerleri girip uygularsiniz.
-   - Parametre yoksa dogrudan uygulanir.
-   - **Varsayilanla** butonu modal acmadan varsayilan degerlerle uygular.
+Panel dar bir sutunda (280-350 px) timeline'in yaninda acik kalacak sekilde tasarlandi.
+Dikey duzen sabittir:
+
+```
+ 36px  Header      fx  Expression Library  v1.0        12/151   ⋯
+ 70px  Arama       [ Quick search...                        / ]
+                   [All] [★] [Mine] [3D] [Color] [Layout] [Loops] ...
+ 28px  Mod         [ Auto (Akilli)          v ]   ( ) Skip Prompts
+  ---  Kartlar     Basic Wiggle          2 params        Random
+                   Any · Standart rastgele titresim ifadesi.   ☆ ⎇
+ 42px  Aksiyon     [ + New ]  [    Apply to Selected        ]
+ 18px  Durum       ● MAIN_COMP · 2 katman
+```
+
+1. Timeline'da bir veya birden fazla **katman** secin (istege bagli: dogrudan bir
+   **property** de secebilirsiniz).
+2. `/` tusuna basip arayin veya bir kategori cipine tiklayin.
+3. Karta tiklayarak secin — sol kenarda mavi vurgu belirir.
+4. **Apply to Selected** (veya karta **cift tiklama**, ya da `Enter`) ile uygulayin.
+
+Kod parametre iceriyorsa mini bir modal acilir. **Skip Prompts** acikken modal
+atlanir ve varsayilan degerlerle aninda uygulanir.
+
+Kart uzerine gelince sagda mikro aksiyonlar cikar:
+`☆` favori, `⎇` turet (dahili kayitlarin duzenlenebilir kopyasi), `✎` duzenle,
+`✕` sil (yalniz kendi kayitlariniz).
+
+Disa/ice aktarma ve "secilinin expression'ini sil" islemleri header'daki `⋯`
+menusundedir.
 
 ### Uygulama modu (Scope)
 
 | Mod | Davranis |
 | --- | --- |
-| **Otomatik** | Timeline'da elle property sectiyseniz ona, secmediyseniz sablonun hedef ozelligine uygular. |
-| **Sadece secili ozelliklere** | Yalnizca timeline'da isaretledigin property'lere uygular. |
-| **Sablonun hedef ozelligine** | Property secimini yok sayar, kartin `Position`, `Source Text` vb. hedefini katmanda arayip bulur. |
+| **Auto (Akilli)** | Timeline'da elle property sectiyseniz ona, secmediyseniz sablonun hedef ozelligine uygular. |
+| **Strict Target** | Property secimini yok sayar, kartin `Position`, `Source Text` vb. hedefini katmanda arayip bulur. |
+| **Selected Properties** | Yalnizca timeline'da isaretledigin property'lere uygular. |
+
+Mod secimi, Skip Prompts durumu ve favoriler diske kaydedilir; panel kapanip
+acildiginda korunur.
+
+### Durum cubugu
+
+| Renk | Anlam |
+| --- | --- |
+| Gri (`Ready`) | Bosta — aktif kompozisyon ve secili katman sayisini gosterir. |
+| Yesil | Islem basarili; 2 sn sonra bos duruma doner. |
+| Turuncu | Bilgilendirme; 4 sn sonra bos duruma doner. |
+| Kirmizi | Hata — kalicidir, **uzerine tiklayinca hata metnini panoya kopyalar**. |
 
 ### Parametre sozdizimi
 
@@ -119,27 +155,28 @@ wiggle({{frekans=2}}, {{genlik=30}});
 thisComp.layer("{{hedef=Target}}").position;
 ```
 
-Panel bunlari otomatik tespit eder, kart uzerinde `2 parametre` rozeti gosterir ve
-uygulama aninda giris modali acar. Ayni parametre adini birden fazla kez kullanabilirsiniz —
-tek bir input ile hepsi degisir.
+Panel bunlari otomatik tespit eder, kart uzerinde `2 params` rozeti gosterir ve
+uygulama aninda iki sutunlu bir modal acar. Her satirin sagindaki `↺` ikonu o
+parametreyi varsayilanina dondurur. Ayni parametre adini birden fazla kez
+kullanabilirsiniz — tek bir input ile hepsi degisir.
 
-Parametre **adinin** cevresindeki bosluklar yok sayilir, **varsayilan deger** ise oldugu gibi
-alinir. Boylece bosluk tasiyan varsayilanlar korunur:
+Parametre **adinin** cevresindeki bosluklar yok sayilir, **varsayilan deger** ise
+oldugu gibi alinir. Boylece bosluk tasiyan varsayilanlar korunur:
 
 ```javascript
-"{{onEk=$}}" + n.toFixed(2) + "{{sonEk= /mo}}";   // -> "$5.00 /mo"  (bastaki bosluk korunur)
+"{{onEk=$}}" + n.toFixed(2) + "{{sonEk= /mo}}";   // -> "$5.00 /mo"
 ```
 
 ### Kisayollar
 
 | Tus | Islev |
 | --- | --- |
-| `Ctrl/Cmd + F` | Arama kutusuna odaklan |
+| `/` | Arama kutusuna odaklan |
+| `↑` / `↓` | Kartlar arasinda gez |
+| `Enter` | Secili karti uygula (modalda: uygula) |
+| Cift tiklama | Karti dogrudan uygula |
+| `Esc` | Modali / editoru kapat, yoksa aramayi temizle |
 | `Ctrl/Cmd + S` | Editorde kaydet |
-| `Enter` | Parametre modalinda uygula |
-| `Esc` | Modali / editoru kapat |
-
----
 
 ## 4. Veri Saklama
 
@@ -257,11 +294,14 @@ npm i playwright-core
 node test/ui.test.js          # gerekirse: CHROMIUM_PATH=/yol/chrome node test/ui.test.js
 ```
 
-Kapsam: 151 kartin render'i, arama (Turkce aksan katlamasi dahil), kategori
-cipleri, parametre modali (varsayilanlar, canli onizleme, uygulama), coklu
-katmana toplu atama, undo grubu temizligi, hedef property eslestirmesi,
-regex kacislarinin tarayici -> host boyunca korunmasi, editorden kayit,
-kalicilik (yeniden yuklemede korunma) ve silme.
+Kapsam: sabit dikey duzenin piksel olculeri (36/70/28/42/18 px ve 44-48 px kart),
+kart render'i, arama (`/` kisayolu, Turkce aksan katlamasi), bos durum ve
+"+ Yeni Olarak Ekle", kart secimi ve Apply to Selected, parametre modali
+(otomatik odak, canli onizleme, `↺` sifirlama, `Enter`, `Esc`), Skip Prompts ile
+cift tiklamada modalsiz uygulama, coklu katmana toplu atama, undo grubu,
+hedef property eslestirmesi, regex kacislarinin tarayici -> host korunmasi,
+hata durumunda kirmizi status bar, favoriler, ayar kaliciligi, editorden kayit,
+yeniden yuklemede kalicilik ve silme.
 
 ## 9. Dagitim (ZXP)
 

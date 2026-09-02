@@ -8,62 +8,71 @@
 </head>
 <body>
 
-  <!-- ============================ HEADER ============================ -->
-  <header class="app-header">
-    <div class="brand">
-      <span class="brand-mark">fx</span>
-      <div class="brand-text">
-        <h1>Expression Library</h1>
-        <span id="statusLine" class="status">Baglaniyor...</span>
-      </div>
-    </div>
-    <button id="btnRefresh" class="icon-btn" title="Secimi yenile">&#8635;</button>
+  <!-- ===================== HEADER (36px) ===================== -->
+  <header class="hdr">
+    <span class="logo">fx</span>
+    <span class="hdr-name">Expression&nbsp;Library</span>
+    <span class="ver">v1.0</span>
+    <span class="hdr-count"><b id="countShown">0</b><i>/</i><span id="countTotal">0</span></span>
+    <button id="btnMenu" class="ico" title="Daha fazla" aria-haspopup="true">&#8943;</button>
   </header>
 
-  <!-- ============================ LIST VIEW ============================ -->
+  <div id="menuPop" class="pop" hidden>
+    <button data-act="refresh">Secimi yenile</button>
+    <button data-act="export">Kutuphaneyi disa aktar</button>
+    <button data-act="import">Kutuphaneyi ice aktar</button>
+    <div class="pop-sep"></div>
+    <button data-act="clear" class="danger">Secilinin expression'ini sil</button>
+  </div>
+
+  <!-- ===================== LIST VIEW ===================== -->
   <main id="viewList" class="view">
 
-    <div class="toolbar">
-      <div class="search-wrap">
-        <span class="search-ico">&#9906;</span>
-        <input id="searchInput" type="text" placeholder="Ara: wiggle, loop, counter, sayac..." autocomplete="off">
-        <button id="btnClearSearch" class="clear-btn" title="Temizle">&times;</button>
+    <!-- Search + chips (70px) -->
+    <div class="filterbar">
+      <div class="search">
+        <span class="s-ico" aria-hidden="true">&#9906;</span>
+        <input id="searchInput" type="text" placeholder="Quick search..." autocomplete="off" spellcheck="false">
+        <kbd id="searchKbd">/</kbd>
+        <button id="btnClearSearch" class="s-clear" title="Temizle">&times;</button>
       </div>
-      <button id="btnNew" class="primary-btn" title="Yeni expression ekle">+ Yeni</button>
+      <nav id="chipBar" class="chips"></nav>
     </div>
 
-    <div class="scope-row">
-      <label for="scopeSelect">Uygulama modu</label>
-      <select id="scopeSelect">
-        <option value="auto">Otomatik (secili ozellik varsa ona)</option>
-        <option value="selection">Sadece secili ozelliklere</option>
-        <option value="target">Sablonun hedef ozelligine</option>
+    <!-- Target & mode (28px) -->
+    <div class="modebar">
+      <select id="scopeSelect" title="Uygulama modu">
+        <option value="auto">Auto (Akilli)</option>
+        <option value="target">Strict Target</option>
+        <option value="selection">Selected Properties</option>
       </select>
+      <label class="sw" title="Parametre modalini atla, varsayilanlarla uygula">
+        <input type="checkbox" id="skipPrompts">
+        <span class="track"><span class="knob"></span></span>
+        <span class="sw-txt">Skip Prompts</span>
+      </label>
     </div>
 
-    <nav id="chipBar" class="chip-bar"></nav>
+    <!-- Cards -->
+    <div id="cardList" class="list" tabindex="-1"></div>
 
-    <div id="cardList" class="card-list"></div>
-    <div id="emptyState" class="empty-state" hidden>
-      <p>Sonuc bulunamadi.</p>
-      <span>Farkli bir anahtar kelime deneyin veya yeni bir expression ekleyin.</span>
+    <div id="emptyState" class="empty" hidden>
+      <p>Eslesme yok</p>
+      <span id="emptyTerm" class="empty-term"></span>
+      <button id="btnAddFromSearch" class="ghost sm">+ Yeni Olarak Ekle</button>
     </div>
 
-    <footer class="app-footer">
-      <span id="countLabel">0 expression</span>
-      <span class="dot">&bull;</span>
-      <button id="btnExport" class="link-btn">Disa aktar</button>
-      <span class="dot">&bull;</span>
-      <button id="btnImport" class="link-btn">Ice aktar</button>
-      <span class="dot">&bull;</span>
-      <button id="btnClearExp" class="link-btn danger">Secilinin expression'ini sil</button>
+    <!-- Action footer (42px) -->
+    <footer class="actions">
+      <button id="btnNew" class="ghost">+ New</button>
+      <button id="btnApply" class="primary" disabled>Apply to Selected</button>
     </footer>
   </main>
 
-  <!-- ============================ EDITOR VIEW ============================ -->
+  <!-- ===================== EDITOR VIEW ===================== -->
   <section id="viewEditor" class="view" hidden>
-    <div class="editor-head">
-      <button id="btnBack" class="icon-btn" title="Geri">&#8592;</button>
+    <div class="ed-head">
+      <button id="btnBack" class="ico" title="Geri">&#8592;</button>
       <h2 id="editorTitle">Yeni Expression</h2>
     </div>
 
@@ -72,7 +81,7 @@
         <input id="fName" type="text" placeholder="Orn: Yumusak Kamera Sarsintisi">
       </label>
 
-      <div class="form-row">
+      <div class="frow">
         <label>Kategori
           <input id="fCat" type="text" list="catList" placeholder="Motion">
           <datalist id="catList"></datalist>
@@ -83,50 +92,50 @@
       </div>
 
       <label>Aciklama
-        <input id="fDesc" type="text" placeholder="Bu expression ne yapiyor?">
+        <input id="fDesc" type="text" placeholder="Tek satirlik ozet">
       </label>
 
       <label>Gereksinim
         <input id="fReq" type="text" placeholder="Orn: Slider Control, Parent Katman, Yok">
       </label>
 
-      <label class="code-label">
-        <span>Expression Kodu <em>&nbsp;&mdash; parametre icin <code>{{ad=varsayilan}}</code> yazin</em></span>
+      <label class="code-l">
+        <span>Kod <i>&mdash; parametre: <code>{{ad=varsayilan}}</code></i></span>
         <textarea id="fCode" spellcheck="false" placeholder="wiggle({{frekans=2}}, {{genlik=30}});"></textarea>
       </label>
 
-      <div id="paramHint" class="param-hint"></div>
+      <div id="paramHint" class="phint"></div>
 
-      <div class="editor-actions">
-        <button id="btnDelete" class="ghost-btn danger" hidden>Sil</button>
-        <span class="spacer"></span>
-        <button id="btnCancel" class="ghost-btn">Vazgec</button>
-        <button id="btnSave" class="primary-btn">Kaydet</button>
+      <div class="ed-actions">
+        <button id="btnDelete" class="ghost danger" hidden>Sil</button>
+        <span class="sp"></span>
+        <button id="btnCancel" class="ghost">Vazgec</button>
+        <button id="btnSave" class="primary">Kaydet</button>
       </div>
     </div>
   </section>
 
-  <!-- ============================ PARAM MODAL ============================ -->
-  <div id="modalBackdrop" class="modal-backdrop" hidden>
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-head">
+  <!-- ===================== STATUS BAR (18px) ===================== -->
+  <div id="statusBar" class="statusbar" data-kind="idle">
+    <span id="statusDot" class="dot"></span>
+    <span id="statusText">Ready</span>
+  </div>
+
+  <!-- ===================== PARAM MODAL ===================== -->
+  <div id="modalBackdrop" class="backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="m-head">
         <h3 id="modalTitle">Parametreler</h3>
-        <button id="btnModalClose" class="icon-btn">&times;</button>
+        <button id="btnModalClose" class="ico" title="Kapat">&times;</button>
       </div>
-      <div id="modalFields" class="modal-fields"></div>
-      <div class="modal-preview">
-        <span class="preview-label">Onizleme</span>
-        <pre id="modalPreview"></pre>
-      </div>
-      <div class="modal-actions">
-        <button id="btnUseDefaults" class="ghost-btn">Varsayilanlari kullan</button>
-        <button id="btnApplyParams" class="primary-btn">Uygula</button>
+      <div id="modalFields" class="pgrid"></div>
+      <pre id="modalPreview" class="m-prev"></pre>
+      <div class="m-foot">
+        <button id="btnUseDefaults" class="ghost sm">Varsayilanlar</button>
+        <button id="btnApplyParams" class="primary sm">Apply</button>
       </div>
     </div>
   </div>
-
-  <!-- ============================ TOAST ============================ -->
-  <div id="toast" class="toast" hidden></div>
 
   <script src="lib/CSInterface.js"></script>
   <script src="data/starter-pack.js"></script>
