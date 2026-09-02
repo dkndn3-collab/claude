@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expression Library</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============================ HEADER ============================ -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark">fx</span>
+      <div class="brand-text">
+        <h1>Expression Library</h1>
+        <span id="statusLine" class="status">Baglaniyor...</span>
+      </div>
+    </div>
+    <button id="btnRefresh" class="icon-btn" title="Secimi yenile">&#8635;</button>
+  </header>
+
+  <!-- ============================ LIST VIEW ============================ -->
+  <main id="viewList" class="view">
+
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-ico">&#9906;</span>
+        <input id="searchInput" type="text" placeholder="Ara: wiggle, loop, counter, sayac..." autocomplete="off">
+        <button id="btnClearSearch" class="clear-btn" title="Temizle">&times;</button>
+      </div>
+      <button id="btnNew" class="primary-btn" title="Yeni expression ekle">+ Yeni</button>
+    </div>
+
+    <div class="scope-row">
+      <label for="scopeSelect">Uygulama modu</label>
+      <select id="scopeSelect">
+        <option value="auto">Otomatik (secili ozellik varsa ona)</option>
+        <option value="selection">Sadece secili ozelliklere</option>
+        <option value="target">Sablonun hedef ozelligine</option>
+      </select>
+    </div>
+
+    <nav id="chipBar" class="chip-bar"></nav>
+
+    <div id="cardList" class="card-list"></div>
+    <div id="emptyState" class="empty-state" hidden>
+      <p>Sonuc bulunamadi.</p>
+      <span>Farkli bir anahtar kelime deneyin veya yeni bir expression ekleyin.</span>
+    </div>
+
+    <footer class="app-footer">
+      <span id="countLabel">0 expression</span>
+      <span class="dot">&bull;</span>
+      <button id="btnExport" class="link-btn">Disa aktar</button>
+      <span class="dot">&bull;</span>
+      <button id="btnImport" class="link-btn">Ice aktar</button>
+      <span class="dot">&bull;</span>
+      <button id="btnClearExp" class="link-btn danger">Secilinin expression'ini sil</button>
+    </footer>
+  </main>
+
+  <!-- ============================ EDITOR VIEW ============================ -->
+  <section id="viewEditor" class="view" hidden>
+    <div class="editor-head">
+      <button id="btnBack" class="icon-btn" title="Geri">&#8592;</button>
+      <h2 id="editorTitle">Yeni Expression</h2>
+    </div>
+
+    <div class="form">
+      <label>Ad
+        <input id="fName" type="text" placeholder="Orn: Yumusak Kamera Sarsintisi">
+      </label>
+
+      <div class="form-row">
+        <label>Kategori
+          <input id="fCat" type="text" list="catList" placeholder="Motion">
+          <datalist id="catList"></datalist>
+        </label>
+        <label>Hedef Ozellik
+          <select id="fProp"></select>
+        </label>
+      </div>
+
+      <label>Aciklama
+        <input id="fDesc" type="text" placeholder="Bu expression ne yapiyor?">
+      </label>
+
+      <label>Gereksinim
+        <input id="fReq" type="text" placeholder="Orn: Slider Control, Parent Katman, Yok">
+      </label>
+
+      <label class="code-label">
+        <span>Expression Kodu <em>&nbsp;&mdash; parametre icin <code>{{ad=varsayilan}}</code> yazin</em></span>
+        <textarea id="fCode" spellcheck="false" placeholder="wiggle({{frekans=2}}, {{genlik=30}});"></textarea>
+      </label>
+
+      <div id="paramHint" class="param-hint"></div>
+
+      <div class="editor-actions">
+        <button id="btnDelete" class="ghost-btn danger" hidden>Sil</button>
+        <span class="spacer"></span>
+        <button id="btnCancel" class="ghost-btn">Vazgec</button>
+        <button id="btnSave" class="primary-btn">Kaydet</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ PARAM MODAL ============================ -->
+  <div id="modalBackdrop" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3 id="modalTitle">Parametreler</h3>
+        <button id="btnModalClose" class="icon-btn">&times;</button>
+      </div>
+      <div id="modalFields" class="modal-fields"></div>
+      <div class="modal-preview">
+        <span class="preview-label">Onizleme</span>
+        <pre id="modalPreview"></pre>
+      </div>
+      <div class="modal-actions">
+        <button id="btnUseDefaults" class="ghost-btn">Varsayilanlari kullan</button>
+        <button id="btnApplyParams" class="primary-btn">Uygula</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ TOAST ============================ -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="lib/CSInterface.js"></script>
+  <script src="data/starter-pack.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>
