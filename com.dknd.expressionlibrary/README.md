@@ -222,6 +222,22 @@ Kapsam:
 - 150 starter pack kaydinin tamami: parametre kalintisi yok, dogrulamadan geciyor,
   client -> host JSON koprusunde kod bit bit ayni kaliyor
 
+### Uctan uca UI testi
+
+Paneli gercek Chromium'da, sahte CEP koprusu (`window.__adobe_cep__`) ve sahte
+After Effects DOM'u ile surer:
+
+```bash
+npm i playwright-core
+node test/ui.test.js          # gerekirse: CHROMIUM_PATH=/yol/chrome node test/ui.test.js
+```
+
+Kapsam: 150 kartin render'i, arama (Turkce aksan katlamasi dahil), kategori
+cipleri, parametre modali (varsayilanlar, canli onizleme, uygulama), coklu
+katmana toplu atama, undo grubu temizligi, hedef property eslestirmesi,
+regex kacislarinin tarayici -> host boyunca korunmasi, editorden kayit,
+kalicilik (yeniden yuklemede korunma) ve silme.
+
 ## 7. Dagitim (ZXP)
 
 Panel imzasiz olarak PlayerDebugMode ile calisir. Baskalarina dagitmak icin

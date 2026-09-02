@@ -226,10 +226,19 @@ function toast(msg, kind) {
 // ===========================================================================
 // 6. RENDER
 // ===========================================================================
+// Turkce aksanlari katlar: kullanici "dongu" da yazsa "döngü" de yazsa ayni sonucu alir.
+var TR_FOLD = { '\u00e7': 'c', '\u00c7': 'c', '\u011f': 'g', '\u011e': 'g', '\u0131': 'i', '\u0130': 'i',
+                '\u00f6': 'o', '\u00d6': 'o', '\u015f': 's', '\u015e': 's', '\u00fc': 'u', '\u00dc': 'u' };
+
+function fold(s) {
+    return String(s).replace(/[\u00e7\u00c7\u011f\u011e\u0131\u0130\u00f6\u00d6\u015f\u015e\u00fc\u00dc]/g,
+        function (c) { return TR_FOLD[c]; }).toLowerCase();
+}
+
 function matches(item, q) {
     if (!q) { return true; }
-    var hay = (item.name + ' ' + item.cat + ' ' + item.prop + ' ' + (item.desc || '') + ' ' + item.code).toLowerCase();
-    var words = q.toLowerCase().split(/\s+/);
+    var hay = fold(item.name + ' ' + item.cat + ' ' + item.prop + ' ' + (item.desc || '') + ' ' + item.code);
+    var words = fold(q).split(/\s+/);
     for (var i = 0; i < words.length; i++) {
         if (words[i] && hay.indexOf(words[i]) === -1) { return false; }
     }
