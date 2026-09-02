@@ -77,15 +77,15 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   await page.waitForSelector('.card');
 
   console.log('\n== Panel acilisi ==');
-  check('150 kart render edildi', await page.locator('.card').count() === 150);
-  check('sayac dogru', (await page.textContent('#countLabel')) === '150 expression');
+  check('151 kart render edildi', await page.locator('.card').count() === 151);
+  check('sayac dogru', (await page.textContent('#countLabel')) === "151 expression");
   await page.waitForFunction(() => document.getElementById('statusLine').textContent.indexOf('MAIN_COMP') !== -1, null, { timeout: 5000 });
   check('durum satiri AE baglamini gosteriyor', (await page.textContent('#statusLine')).includes('MAIN_COMP - 2 katman secili'));
   check('kategori cipleri olustu', await page.locator('.chip').count() > 10);
 
   console.log('\n== Arama ve filtreleme ==');
   await page.fill('#searchInput', 'wiggle');
-  await page.waitForFunction(() => document.querySelectorAll('.card').length < 150);
+  await page.waitForFunction(() => document.querySelectorAll('.card').length < 151);
   const wiggleCount = await page.locator('.card').count();
   check('arama daralt: "wiggle" -> ' + wiggleCount + ' kart', wiggleCount > 3 && wiggleCount < 20);
   await page.fill('#searchInput', 'd\u00f6ng\u00fc');
@@ -100,7 +100,7 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   const multi = await page.locator('.card').count();
   check('coklu kelime aramasi -> ' + multi + ' kart', multi >= 3);
   await page.click('#btnClearSearch');
-  check('temizle -> 150', await page.locator('.card').count() === 150);
+  check('temizle -> 151', await page.locator('.card').count() === 151);
 
   await page.locator('.chip', { hasText: 'Looping' }).first().click();
   const loopCount = await page.locator('.card').count();
@@ -157,14 +157,14 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   check('parametre ipucu tespit etti', (await page.textContent('#paramHint')).includes('ek = !'), await page.textContent('#paramHint'));
   await page.click('#btnSave');
   await page.waitForSelector('#viewList:not([hidden])');
-  check('regex iceren kod EXP_validate\'ten gecti (kaydedildi)', await page.locator('.card').count() === 151);
+  check('regex iceren kod EXP_validate\'ten gecti (kaydedildi)', await page.locator('.card').count() === 152);
 
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('expressionLibrary') || '{}'));
   check('localStorage yedegine yazildi', stored.items && stored.items.length === 1 && stored.items[0].name === 'Test Kaydi', stored.items);
 
   await page.reload();
   await page.waitForSelector('.card');
-  check('yeniden yuklemede kayit korundu (kalicilik)', await page.locator('.card').count() === 151);
+  check('yeniden yuklemede kayit korundu (kalicilik)', await page.locator('.card').count() === 152);
   check('"Kendi Kayitlarim" cipi olustu', await page.locator('.chip', { hasText: 'Kendi Kayitlarim' }).count() === 1);
 
   await page.screenshot({ path: pathx.join(require('os').tmpdir(), 'expression-library-panel.png') });
@@ -174,7 +174,7 @@ const getPos = (l) => l.property('ADBE Transform Group').property('ADBE Position
   await page.locator('.card').first().locator('.mini-btn.danger').click();
   await page.waitForTimeout(300);
   await page.click('#btnClearSearch');
-  check('silme calisti -> 150', await page.locator('.card').count() === 150);
+  check('silme calisti -> 151', await page.locator('.card').count() === 151);
 
   await browser.close();
   console.log(`\n${pass} pass, ${fail} fail`);

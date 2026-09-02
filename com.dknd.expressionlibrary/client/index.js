@@ -141,7 +141,9 @@ function saveLibrary(silent) {
 // ===========================================================================
 // 3. PARAMETRE MOTORU  {{ad=varsayilan}}
 // ===========================================================================
-var PARAM_RE = /\{\{\s*([^}=\s][^}=]*?)\s*(?:=\s*([^}]*?)\s*)?\}\}/g;
+// Parametre adinin cevresindeki bosluk yok sayilir; VARSAYILAN DEGER ise oldugu gibi
+// alinir - "{{sonEk= /mo}}" gibi bosluk tasiyan varsayilanlar korunmali.
+var PARAM_RE = /\{\{\s*([^}=\s][^}=]*?)\s*(?:=([^}]*))?\}\}/g;
 
 /** Kod icindeki benzersiz parametreleri sirali olarak dondurur. */
 function parseParams(code) {

@@ -622,7 +622,12 @@ if (n > 0 && t < 1) { v = velocityAtTime(key(n).time - 0.01); value + v * amp * 
 
 { id:'e150', name:'Speed Driven Blur Length', cat:'Motion', prop:'Blur Length', req:'Directional Blur',
   desc:'Katman hizlandikca motion blur etkisini dinamik olarak artirir.',
-  code:R`speed * {{carpan=0.08}};` }
+  code:R`speed * {{carpan=0.08}};` },
+
+// -------------------------------- Dokumandaki "Plug-and-Play" bolumunden ek kayit
+{ id:'e151', name:'Text Box Vertical Align', cat:'Shape Layers', prop:'Position', req:'Rectangle Shape',
+  desc:'Duyarli metin kutusu rig inde cok satirli metinde dikey kaymayi onler.',
+  code:R`x = value[0]; y = content("Rectangle 1").content("Rectangle Path 1").size[1]/2; [x, y];` }
 
     ];
 })(window);

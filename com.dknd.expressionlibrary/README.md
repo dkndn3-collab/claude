@@ -5,7 +5,7 @@ expression atayan, kendi expression'larinizi ekleyip duzenleyebildiginiz,
 `{{parametre=varsayilan}}` sablonlarini dinamik olarak ayarlayabildiginiz
 modern ve minimal bir panel eklentisi.
 
-- **150 hazir expression** (dahili starter pack, 98 tanesi parametrik)
+- **151 hazir expression** (dahili starter pack, 98 tanesi parametrik)
 - Kategori cipleri + coklu kelime arama
 - Parametre modali ("Uygula") veya tek tikla "Varsayilanla" uygulama
 - Coklu katman secimine toplu uygulama + akilli property eslestirme
@@ -29,7 +29,7 @@ com.dknd.expressionlibrary/
 │   ├── lib/
 │   │   └── CSInterface.js    # CEP kopru kutuphanesi
 │   └── data/
-│       └── starter-pack.js   # 150 expression'lik dahili veritabani
+│       └── starter-pack.js   # 151 expression'lik dahili veritabani
 ├── .debug                    # Chrome remote debug (localhost:8791)
 └── install.sh                # macOS icin tek komutluk kurulum
 ```
@@ -123,6 +123,13 @@ Panel bunlari otomatik tespit eder, kart uzerinde `2 parametre` rozeti gosterir 
 uygulama aninda giris modali acar. Ayni parametre adini birden fazla kez kullanabilirsiniz —
 tek bir input ile hepsi degisir.
 
+Parametre **adinin** cevresindeki bosluklar yok sayilir, **varsayilan deger** ise oldugu gibi
+alinir. Boylece bosluk tasiyan varsayilanlar korunur:
+
+```javascript
+"{{onEk=$}}" + n.toFixed(2) + "{{sonEk= /mo}}";   // -> "$5.00 /mo"  (bastaki bosluk korunur)
+```
+
 ### Kisayollar
 
 | Tus | Islev |
@@ -150,7 +157,7 @@ Node.js herhangi bir sebeple devre disiysa panel otomatik olarak `localStorage`
 yedegine duser ve durumu bildirir. Alt bardaki **Disa aktar / Ice aktar** ile
 kutuphanenizi JSON olarak tasiyabilirsiniz.
 
-Dahili 150 kayit **salt okunurdur**; bir kartta **Turet**'e basmak onun duzenlenebilir
+Dahili 151 kayit **salt okunurdur**; bir kartta **Turet**'e basmak onun duzenlenebilir
 bir kopyasini olusturur.
 
 ---
@@ -191,7 +198,25 @@ ile dogrulanir; kabul etmeyenler atlanir ve panelde rapor edilir.
 
 ---
 
-## 6. Sorun Giderme
+## 6. Kaynak Dokumandan Sapmalar
+
+Starter pack, verilen expression veritabanindaki **150 kaydin tamamini** icerir
+(tablo No 1-150 -> `e001`-`e150`). Ek olarak dokumanin "Plug-and-Play" bolumundeki
+duyarli metin kutusu hizalama kodu `e151` olarak eklenmistir.
+
+Asagidaki kayitlarin kodu, **After Effects'in ExtendScript (ES3) motorunda calisabilmesi
+icin** dokumandakinden bilincli olarak farklidir:
+
+| No | Dokumandaki | Kutuphanedeki | Neden |
+| --- | --- | --- | --- |
+| 89, 90, 92, 116 | `n => ...` (arrow function) | `function (n) { ... }` | ExtendScript arrow function desteklemez |
+| 95 | `.trim()` | `.replace(/^\s+|\s+$/g, "")` | ExtendScript'te `String.trim` yok |
+| 136 | `"DESIGN ".repeat(10)` | `for` dongusu ile birlestirme | ExtendScript'te `String.repeat` yok |
+| 112 | `... .roundness = 25;` | `25;` (hedef: Roundness) | Expression baska bir property'e atama yapamaz; deger dogrudan Roundness'a uygulanir |
+| 16 | `pinTo = "left";` satiri | kaldirildi | Kullanilmayan degisken, sonucu etkilemiyor |
+| 103, 104 | `time * 2 * Math.PI` | `time * {{frekans=1}} * 2 * Math.PI` | Frekans parametrik hale getirildi (matematiksel olarak ayni) |
+
+## 7. Sorun Giderme
 
 | Belirti | Cozum |
 | --- | --- |
@@ -204,7 +229,7 @@ ile dogrulanir; kabul etmeyenler atlanir ve panelde rapor edilir.
 
 ---
 
-## 7. Test
+## 8. Test
 
 Sahte (mock) After Effects DOM'u uzerinde calisan regresyon testi:
 
@@ -232,13 +257,13 @@ npm i playwright-core
 node test/ui.test.js          # gerekirse: CHROMIUM_PATH=/yol/chrome node test/ui.test.js
 ```
 
-Kapsam: 150 kartin render'i, arama (Turkce aksan katlamasi dahil), kategori
+Kapsam: 151 kartin render'i, arama (Turkce aksan katlamasi dahil), kategori
 cipleri, parametre modali (varsayilanlar, canli onizleme, uygulama), coklu
 katmana toplu atama, undo grubu temizligi, hedef property eslestirmesi,
 regex kacislarinin tarayici -> host boyunca korunmasi, editorden kayit,
 kalicilik (yeniden yuklemede korunma) ve silme.
 
-## 7. Dagitim (ZXP)
+## 9. Dagitim (ZXP)
 
 Panel imzasiz olarak PlayerDebugMode ile calisir. Baskalarina dagitmak icin
 [ZXPSignCmd](https://github.com/Adobe-CEP/CEP-Resources) ile imzalayin:

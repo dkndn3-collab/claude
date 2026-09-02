@@ -134,7 +134,7 @@ check('kapanmamis regex yakalandi', !call('EXP_validate', 'value.replace(/abc, "
 console.log('\n== 150 starter pack kaydinin tamami ==');
 global.window = {};
 require(require('path').join(__dirname, '..', 'client', 'data', 'starter-pack.js'));
-const RE = /\{\{\s*([^}=\s][^}=]*?)\s*(?:=\s*([^}]*?)\s*)?\}\}/g;
+const RE = /\{\{\s*([^}=\s][^}=]*?)\s*(?:=([^}]*))?\}\}/g;
 const resolve = (c, v = {}) => c.replace(RE, (f, n, d) => {
   const x = v[n];
   return (x === undefined || x === '') ? (d === undefined ? '' : d) : String(x);
